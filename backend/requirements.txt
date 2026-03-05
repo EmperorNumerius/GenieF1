@@ -9,4 +9,4 @@ pydantic==2.7.4
 redis==5.0.7
 signalrcore==0.9.5
 websockets==12.0
-python-multipart==0.0.9
+python-multipart==0.0.22
