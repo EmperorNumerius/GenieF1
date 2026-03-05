@@ -5,11 +5,12 @@ frontend/out/
 frontend/.env.local
 
 # Python
-backend/__pycache__/
-backend/*.pyc
-backend/.pytest_cache/
-discord_bot/__pycache__/
-discord_bot/*.pyc
+__pycache__/
+**/__pycache__/
+*.pyc
+**/*.pyc
+.pytest_cache/
+**/.pytest_cache/
 
 # FastF1 cache
 /tmp/fastf1_cache/
