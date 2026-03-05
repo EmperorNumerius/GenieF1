@@ -23,6 +23,11 @@ interface CarState {
   tire: string;
   tire_age: number;
   stint_laps: number;
+  last_lap_time: number | null;
+  lap_number: number;
+  sector_1: number | null;
+  sector_2: number | null;
+  sector_3: number | null;
 }
 
 interface SessionInfo {
@@ -399,38 +404,31 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* Gear & RPM */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
-                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 10, textAlign: 'center' }}>
-                      <p style={{ fontSize: 9, color: '#666', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>Gear</p>
-                      <p style={{ fontSize: 20, fontFamily: 'JetBrains Mono, monospace', fontWeight: 700 }}>{selected.gear || '-'}</p>
+                  {/* Lap info */}
+                  <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <p style={{ fontSize: 9, color: '#666', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Last Lap</p>
+                      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#888' }}>Lap {selected.lap_number || '-'}</span>
                     </div>
-                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 10, textAlign: 'center' }}>
-                      <p style={{ fontSize: 9, color: '#666', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>RPM</p>
-                      <p style={{ fontSize: 14, fontFamily: 'JetBrains Mono, monospace', fontWeight: 700 }}>{selected.rpm || '-'}</p>
-                    </div>
+                    <p style={{ fontSize: 22, fontFamily: 'JetBrains Mono, monospace', fontWeight: 700 }}>
+                      {selected.last_lap_time ? `${selected.last_lap_time.toFixed(3)}s` : '---'}
+                    </p>
                   </div>
 
-                  {/* Throttle/Brake bars */}
-                  <div style={{ marginBottom: 12 }}>
-                    <div style={{ marginBottom: 8 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                        <span style={{ fontSize: 9, color: '#666', fontWeight: 700, textTransform: 'uppercase' }}>Throttle</span>
-                        <span style={{ fontSize: 9, fontFamily: 'monospace', color: '#4ade80' }}>{selected.throttle || 0}%</span>
+                  {/* Sector times */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 12 }}>
+                    {[
+                      { label: 'S1', value: selected.sector_1, color: '#a78bfa' },
+                      { label: 'S2', value: selected.sector_2, color: '#4ade80' },
+                      { label: 'S3', value: selected.sector_3, color: '#f59e0b' },
+                    ].map(s => (
+                      <div key={s.label} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+                        <p style={{ fontSize: 9, color: '#666', fontWeight: 700, marginBottom: 3 }}>{s.label}</p>
+                        <p style={{ fontSize: 13, fontFamily: 'JetBrains Mono, monospace', fontWeight: 700, color: s.value ? s.color : '#555' }}>
+                          {s.value ? s.value.toFixed(3) : '---'}
+                        </p>
                       </div>
-                      <div style={{ height: 6, background: '#1a1a1a', borderRadius: 3, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', borderRadius: 3, background: '#22c55e', width: `${selected.throttle || 0}%`, transition: 'width 0.3s' }} />
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                        <span style={{ fontSize: 9, color: '#666', fontWeight: 700, textTransform: 'uppercase' }}>Brake</span>
-                        <span style={{ fontSize: 9, fontFamily: 'monospace', color: '#f87171' }}>{selected.brake || 0}%</span>
-                      </div>
-                      <div style={{ height: 6, background: '#1a1a1a', borderRadius: 3, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', borderRadius: 3, background: '#ef4444', width: `${selected.brake || 0}%`, transition: 'width 0.3s' }} />
-                      </div>
-                    </div>
+                    ))}
                   </div>
 
                   {/* Tyres */}
