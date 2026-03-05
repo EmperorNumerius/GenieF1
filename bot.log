@@ -1,0 +1,3 @@
+WARNING:discord.client:PyNaCl is not installed, voice will NOT be supported
+WARNING:discord.client:davey is not installed, voice will NOT be supported
+WARNING:root:DISCORD_BOT_TOKEN not set. Bot will not start.
