@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Activity, Clock, Zap, Lock, Unlock, MessageSquare, ChevronRight, Calendar, Flag, Gauge, Battery, Wind, Thermometer, Cloud, AlertTriangle } from 'lucide-react';
+import { Clock, Zap, Lock, Unlock, MessageSquare, ChevronRight, Calendar, Flag, Gauge, Thermometer, Cloud } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 
 /* ═══ Types ═══ */
@@ -83,12 +83,14 @@ export default function Home() {
   const [raceState, setRaceState] = useState<RaceState | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<number | null>(null);
   const [isUnlocked, setIsUnlocked] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pitProjection, setPitProjection] = useState<any>(null);
   const [isProjecting, setIsProjecting] = useState(false);
   const [insight, setInsight] = useState<string | null>(null);
   const [showCalendar, setShowCalendar] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [calendarData, setCalendarData] = useState<any[]>([]);
-  const sessionId = useRef('user_' + Math.floor(Math.random() * 99999));
+  const [sessionId] = useState(() => 'user_' + Math.floor(Math.random() * 99999));
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
 
@@ -101,9 +103,12 @@ export default function Home() {
         const data = JSON.parse(event.data);
         setRaceState(data);
         // Auto-select first driver on initial load
-        if (!selectedDriver && data.cars?.length > 0) {
-          setSelectedDriver(data.cars[0].number);
-        }
+        setSelectedDriver((prevSelected) => {
+          if (!prevSelected && data.cars?.length > 0) {
+            return data.cars[0].number;
+          }
+          return prevSelected;
+        });
       };
       ws.onerror = () => setConnected(false);
       ws.onclose = () => { setConnected(false); setTimeout(connectWs, 3000); };
@@ -123,35 +128,36 @@ export default function Home() {
 
   // Fetch AI insight (premium)
   useEffect(() => {
-    if (!isUnlocked) return;
+    if (!isUnlocked || !sessionId) return;
     const fetchInsight = async () => {
       try {
-        const res = await fetch('http://localhost:8000/api/insights', { headers: { 'session-id': sessionId.current } });
+        const res = await fetch('http://localhost:8000/api/insights', { headers: { 'session-id': sessionId } });
         if (res.ok) { const d = await res.json(); setInsight(d.insight); }
       } catch {}
     };
     fetchInsight();
     const iv = setInterval(fetchInsight, 10000);
     return () => clearInterval(iv);
-  }, [isUnlocked]);
+  }, [isUnlocked, sessionId]);
 
   const handleDevUnlock = useCallback(async () => {
-    await fetch(`http://localhost:8000/api/unlock_dev?session_id=${sessionId.current}`, { method: 'POST' });
+    if (!sessionId) return;
+    await fetch(`http://localhost:8000/api/unlock_dev?session_id=${sessionId}`, { method: 'POST' });
     setIsUnlocked(true);
-  }, []);
+  }, [sessionId]);
 
   const handlePitProjection = useCallback(async () => {
-    if (!isUnlocked || !selectedDriver) return;
+    if (!isUnlocked || !selectedDriver || !sessionId) return;
     setIsProjecting(true);
     setPitProjection(null);
     try {
       const res = await fetch(`http://localhost:8000/api/pit_projection?driver_number=${selectedDriver}`, {
-        headers: { 'session-id': sessionId.current }
+        headers: { 'session-id': sessionId }
       });
       if (res.ok) setPitProjection(await res.json());
     } catch {}
     setIsProjecting(false);
-  }, [isUnlocked, selectedDriver]);
+  }, [isUnlocked, selectedDriver, sessionId]);
 
   /* ═══ Loading State ═══ */
   if (!raceState || !connected) {
@@ -239,7 +245,7 @@ export default function Home() {
         {showCalendar && calendarData.length > 0 && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} style={{ overflow: 'hidden', borderBottom: '1px solid rgba(255,255,255,0.08)', background: '#0a0a0a', flexShrink: 0 }}>
             <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8, maxHeight: 180, overflowY: 'auto' }}>
-              {calendarData.map((m: any, i: number) => (
+              {calendarData.map((m: any, i: number) => ( // eslint-disable-line @typescript-eslint/no-explicit-any
                 <div key={i} style={{ fontSize: 11, padding: 8, borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}>
                   <p style={{ fontWeight: 700, fontSize: 10, textTransform: 'uppercase', color: '#888', marginBottom: 2 }}>{m.meeting_name || `Round ${i + 1}`}</p>
                   <p style={{ color: '#ccc' }}>{m.country_name || m.location || ''}</p>
@@ -273,17 +279,21 @@ export default function Home() {
                   const tireColor = TIRE_COLORS[car.tire?.toUpperCase()] || '#666';
                   const teamColor = car.color?.startsWith('#') ? `#${car.color}` : `#${car.color || '888'}`;
                   return (
-                    <motion.div
+                    <motion.button
                       layout
                       key={car.number}
                       onClick={() => setSelectedDriver(car.number)}
+                      aria-label={`Select driver ${car.name}`}
+                      aria-pressed={isSelected}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
                         cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.03)',
                         background: isSelected ? 'rgba(255,255,255,0.06)' : 'transparent',
-                        transition: 'background 0.15s'
+                        transition: 'background 0.15s', width: '100%', textAlign: 'left',
+                        border: 'none', outline: 'none', color: 'inherit', fontFamily: 'inherit'
                       }}
                       whileHover={{ backgroundColor: 'rgba(255,255,255,0.04)' }}
+                      whileFocus={{ backgroundColor: 'rgba(255,255,255,0.06)', outline: '2px solid rgba(255,255,255,0.2)' }}
                     >
                       <span style={{ width: 20, textAlign: 'right', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, fontWeight: 700, color: '#666' }}>{car.pos || '-'}</span>
                       <div style={{ width: 3, height: 24, borderRadius: 4, background: teamColor, flexShrink: 0 }} />
@@ -302,7 +312,7 @@ export default function Home() {
                         <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>{car.pos === 1 ? 'Leader' : formatInterval(car.interval)}</p>
                         <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#666' }}>{car.speed || 0} km/h</p>
                       </div>
-                    </motion.div>
+                    </motion.button>
                   );
                 })}
               </LayoutGroup>
@@ -462,7 +472,7 @@ export default function Home() {
                   {isUnlocked && (
                     <div style={{ background: 'rgba(88,101,242,0.08)', border: '1px solid rgba(88,101,242,0.2)', borderRadius: 10, padding: 10 }}>
                       <p style={{ fontSize: 9, color: '#818cf8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}><MessageSquare style={{ width: 10, height: 10 }} />Discord</p>
-                      <code style={{ display: 'block', background: 'rgba(0,0,0,0.4)', padding: 6, borderRadius: 4, color: '#818cf8', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}>!link {sessionId.current}</code>
+                      <code style={{ display: 'block', background: 'rgba(0,0,0,0.4)', padding: 6, borderRadius: 4, color: '#818cf8', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}>!link {sessionId}</code>
                     </div>
                   )}
                 </div>
