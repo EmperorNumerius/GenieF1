@@ -57,7 +57,7 @@ async def poll_openf1():
             else:
                 logger.warning("No session found from OpenF1 API")
         except Exception as e:
-            logger.error(f"Error polling OpenF1: {e}")
+            logger.warning(f"Error polling OpenF1: {e}")
 
         await asyncio.sleep(10)  # Poll every 10s; per-endpoint caching handles freshness
 

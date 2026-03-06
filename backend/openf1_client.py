@@ -77,20 +77,36 @@ async def fetch(endpoint: str, params: Optional[Dict] = None, cache_ttl: float =
         if e.response.status_code == 429:
             logger.warning(f"Rate limited on {endpoint}, using cache if available")
             return _cache.get(key)  # Return stale cache if available
-        logger.error(f"OpenF1 HTTP error on {endpoint}: {e.response.status_code}")
+        logger.warning(f"OpenF1 HTTP error on {endpoint}: {e.response.status_code}")
         return _cache.get(key)
     except Exception as e:
-        logger.error(f"OpenF1 error on {endpoint}: {e}")
+        logger.warning(f"OpenF1 error on {endpoint}: {e}")
         return _cache.get(key)
 
 
 async def get_latest_session() -> Optional[Dict]:
     """Get the most recent or current session."""
-    data = await fetch("/sessions", {"session_key": "latest"}, cache_ttl=30.0)
-    if data and isinstance(data, list) and len(data) > 0:
-        return data[-1]
-    elif data and isinstance(data, dict):
-        return data
+    try:
+        data = await fetch("/sessions", {"session_key": "latest"}, cache_ttl=30.0)
+        if data and isinstance(data, list) and len(data) > 0:
+            return data[-1]
+        elif data and isinstance(data, dict):
+            if "session_key" in data:
+                return data
+    except Exception as e:
+        logger.warning(f"Failed to fetch 'latest' session: {e}")
+
+    # Fallback: get all sessions for the current year and pick the most recent one
+    import datetime
+    year = datetime.datetime.now().year
+    fallback = await fetch("/sessions", {"year": year}, cache_ttl=3600.0)
+    if fallback and isinstance(fallback, list) and len(fallback) > 0:
+        valid_sessions = [s for s in fallback if s.get("date_start")]
+        if valid_sessions:
+            valid_sessions.sort(key=lambda x: x.get("date_start", ""))
+            return valid_sessions[-1]
+        return fallback[-1]
+        
     return None
 
 
