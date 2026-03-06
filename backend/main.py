@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Header, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from groq import Groq
+from groq import AsyncGroq
 from dotenv import load_dotenv
 import stripe
 
@@ -19,7 +19,8 @@ load_dotenv()
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_dummy")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "dummy_groq_key")
-groq_client = Groq(api_key=GROQ_API_KEY)
+# ⚡ Bolt Optimization: Using AsyncGroq to prevent blocking the asyncio event loop during LLM API calls
+groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
 # In-memory
 unlocked_sessions = set()
@@ -144,7 +145,7 @@ async def get_ai_insights(session_id: str = Depends(check_session_unlocked)):
     )
 
     try:
-        resp = groq_client.chat.completions.create(
+        resp = await groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a professional Formula 1 race commentator and engineer."},
                 {"role": "user", "content": prompt}
@@ -186,7 +187,7 @@ async def get_pit_projection(driver_number: int, session_id: str = Depends(check
     )
 
     try:
-        resp = groq_client.chat.completions.create(
+        resp = await groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a Formula 1 race engineer speaking to your driver on the radio."},
                 {"role": "user", "content": prompt}
