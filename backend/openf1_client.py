@@ -96,10 +96,8 @@ async def get_latest_session() -> Optional[Dict]:
     except Exception as e:
         logger.warning(f"Failed to fetch 'latest' session: {e}")
 
-    # Fallback: get all sessions for the current year and pick the most recent one
-    import datetime
-    year = datetime.datetime.now().year
-    fallback = await fetch("/sessions", {"year": year}, cache_ttl=3600.0)
+    # Fallback: get all sessions and pick the most recent one
+    fallback = await fetch("/sessions", None, cache_ttl=3600.0)
     if fallback and isinstance(fallback, list) and len(fallback) > 0:
         valid_sessions = [s for s in fallback if s.get("date_start")]
         if valid_sessions:
