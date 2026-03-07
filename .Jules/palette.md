@@ -1,0 +1,3 @@
+## 2024-05-15 - Interactive Custom List Items Require Explicit Accessibility
+**Learning:** Custom interactive elements like `motion.div` in lists must explicitly implement `role="button"`, `tabIndex={0}`, keyboard handlers (Enter/Space), and visible focus states (`focus-visible:ring-2`) to ensure full keyboard navigation and screen reader support.
+**Action:** When creating custom interactive list components instead of native `<button>` or `<a>` elements, always apply explicit ARIA attributes, tab index, and keydown listeners to replicate native behavior.
