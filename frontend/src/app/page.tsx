@@ -198,8 +198,18 @@ export default function Home() {
                   <motion.div
                     layout
                     key={car.number}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Select driver ${car.id} - ${car.name?.split(' ').pop()}`}
+                    aria-pressed={isSelected}
                     onClick={() => setSelectedDriver(car.number)}
-                    className={`flex items-center gap-3 p-3 cursor-pointer border-b border-white/5 transition-all duration-300 ${isSelected ? 'bg-white/10 border-l-2' : 'hover:bg-white/5 border-l-2'}`}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelectedDriver(car.number);
+                      }
+                    }}
+                    className={`flex items-center gap-3 p-3 cursor-pointer border-b border-white/5 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-inset ${isSelected ? 'bg-white/10 border-l-2' : 'hover:bg-white/5 border-l-2'}`}
                     style={{ borderLeftColor: isSelected ? teamColor : 'transparent' }}
                   >
                     <span className="w-6 text-right font-mono text-sm font-bold text-neutral-500">{car.pos || '-'}</span>
