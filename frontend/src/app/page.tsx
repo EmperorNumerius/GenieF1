@@ -187,7 +187,7 @@ export default function Home() {
               <Activity className="w-4 h-4 text-red-500" /> Live Standings
             </h2>
           </div>
-          <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+          <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent" role="listbox" aria-label="Drivers list">
             <LayoutGroup>
               {!hasData && <p className="text-neutral-500 text-sm text-center mt-10 p-4">No cars currently tracked. Waiting for API...</p>}
               {raceState.cars?.map((car: any) => {
@@ -198,8 +198,18 @@ export default function Home() {
                   <motion.div
                     layout
                     key={car.number}
+                    role="option"
+                    tabIndex={0}
+                    aria-label={`Select driver ${car.name?.split(' ').pop() || car.id}, position ${car.pos || '-'}`}
+                    aria-selected={isSelected}
                     onClick={() => setSelectedDriver(car.number)}
-                    className={`flex items-center gap-3 p-3 cursor-pointer border-b border-white/5 transition-all duration-300 ${isSelected ? 'bg-white/10 border-l-2' : 'hover:bg-white/5 border-l-2'}`}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelectedDriver(car.number);
+                      }
+                    }}
+                    className={`flex items-center gap-3 p-3 cursor-pointer border-b border-white/5 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:bg-white/10 ${isSelected ? 'bg-white/10 border-l-2' : 'hover:bg-white/5 border-l-2'}`}
                     style={{ borderLeftColor: isSelected ? teamColor : 'transparent' }}
                   >
                     <span className="w-6 text-right font-mono text-sm font-bold text-neutral-500">{car.pos || '-'}</span>
