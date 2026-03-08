@@ -1,0 +1,3 @@
+## 2025-03-08 - Prevent main loop stalling in FastAPI
+**Learning:** Using synchronous network clients (like the default `Groq` client) inside `async def` endpoints in FastAPI blocks the main event loop. This leads to starvation of other concurrent tasks running on the same loop, such as live WebSocket streams or background polling tasks, causing significant stuttering or delay.
+**Action:** Always use the asynchronous equivalent of clients (e.g. `AsyncGroq`) inside `async def` route handlers in FastAPI, or if unavailable, run synchronous blocking operations in a thread pool (`run_in_threadpool` or a standard `def` endpoint) to avoid freezing the event loop.
