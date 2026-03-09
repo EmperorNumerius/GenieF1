@@ -1,7 +1,7 @@
 """
 AI Strategy Engine — Premium features only (behind paywall).
 Handles: pit stop projections, battery/ERS scenarios, yellow flag impact analysis.
-This is NOT the live data source — live data comes from openf1_client.py.
+This is NOT the live data source — live data comes from livef1_client.py.
 """
 
 import random

@@ -1,75 +1,97 @@
-import os
 import asyncio
-import json
 import logging
-from typing import Optional, Any
+import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Request, Header, Depends, WebSocket, WebSocketDisconnect
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from groq import Groq
-from dotenv import load_dotenv
+from pydantic import BaseModel
 import stripe
 
-import openf1_client as openf1
-from simulation import predict_pit_stop, predict_yellow_flag_impact, predict_ers_impact
-
+# Load environment before importing modules that read env at import time.
 load_dotenv()
+
+import livef1_client
+from simulation import predict_ers_impact, predict_pit_stop, predict_yellow_flag_impact
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_dummy")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "dummy_groq_key")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# In-memory
-unlocked_sessions = set()
-cached_state = {"cars": [], "session": None, "weather": None, "race_control": []}
-current_session_key = None
-
 logger = logging.getLogger(__name__)
 
+# In-memory
+unlocked_sessions = set()
+cached_state: Dict[str, Any] = {
+    "cars": [],
+    "session": None,
+    "weather": None,
+    "race_control": [],
+    "updated_at": None,
+    "error": "Booting GenieF1 telemetry service...",
+}
 
-async def poll_openf1():
-    """Background task: poll OpenF1 API for the latest session and race data."""
-    global cached_state, current_session_key
+# LiveF1 data store — populated by the SignalR background thread
+data_store = livef1_client.LiveF1DataStore()
+_livef1_thread = None
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def refresh_cached_state() -> None:
+    """Read from the LiveF1 data store and update the global cached_state."""
+    global cached_state
+
+    state = livef1_client.get_full_race_state(data_store)
+    session_info = livef1_client.get_session_info(data_store)
+
+    state["session"] = session_info
+    state["api_status"] = livef1_client.get_api_status(data_store)
+    state["stale"] = bool(state.get("error"))
+
+    cached_state = state
+
+
+async def state_refresh_loop() -> None:
+    """Background loop that refreshes cached_state from the data store."""
+    # Give the livef1 client a moment to connect
+    await asyncio.sleep(3)
 
     while True:
         try:
-            # Find the latest session
-            session = await openf1.get_latest_session()
-            if session:
-                sk = session.get("session_key")
-                current_session_key = sk
+            await refresh_cached_state()
+        except Exception as exc:
+            logger.warning("Error refreshing state: %s", exc)
 
-                # Fetch full race state
-                state = await openf1.get_full_race_state(str(sk))
-                state["session"] = {
-                    "key": sk,
-                    "name": session.get("session_name", ""),
-                    "type": session.get("session_type", ""),
-                    "circuit": session.get("circuit_short_name", ""),
-                    "country": session.get("country_name", ""),
-                    "meeting_name": session.get("meeting_name", ""),
-                    "status": session.get("status", ""),
-                    "year": session.get("year", 2026),
-                }
-                cached_state = state
-            else:
-                logger.warning("No session found from OpenF1 API")
-        except Exception as e:
-            logger.warning(f"Error polling OpenF1: {e}")
-
-        await asyncio.sleep(10)  # Poll every 10s; per-endpoint caching handles freshness
+        # Refresh every 2 seconds to keep the WebSocket feed fresh
+        await asyncio.sleep(2)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    poll_task = asyncio.create_task(poll_openf1())
+    global _livef1_thread
+
+    # Start the livef1 SignalR client in a daemon thread
+    _livef1_thread = livef1_client.start_livef1_thread(data_store)
+
+    # Start the state refresh loop
+    refresh_task = asyncio.create_task(state_refresh_loop())
+
     yield
-    poll_task.cancel()
+
+    # Cleanup
+    refresh_task.cancel()
+    logger.info("GenieF1 shutting down.")
 
 
-app = FastAPI(title="GenieF1 — Live Race Engineer Dashboard", lifespan=lifespan)
+app = FastAPI(title="GenieF1 - Live Race Engineer Dashboard", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -80,8 +102,6 @@ app.add_middleware(
 )
 
 
-# ──── WebSocket: Live Race Data ────
-
 @app.websocket("/ws/race_data")
 async def websocket_race_data(websocket: WebSocket):
     """Stream live race data to the frontend."""
@@ -89,36 +109,96 @@ async def websocket_race_data(websocket: WebSocket):
     try:
         while True:
             await websocket.send_json(cached_state)
-            await asyncio.sleep(2)  # Send every 2 seconds
+            await asyncio.sleep(2)
     except WebSocketDisconnect:
         pass
 
 
-# ──── REST: Race Data ────
-
 @app.get("/api/race_state")
 async def get_race_state():
-    """Get the current race state (same data as WebSocket, for one-shot requests)."""
+    """Get current race state as a one-shot snapshot."""
     return cached_state
+
+
+@app.get("/api/telemetry")
+async def get_telemetry(driver: Optional[str] = None, driver_number: Optional[int] = None):
+    """Backward-compatible telemetry endpoint with optional driver filter."""
+    if not driver and driver_number is None:
+        return cached_state
+
+    cars = cached_state.get("cars", [])
+    selected = None
+
+    if driver_number is not None:
+        for car in cars:
+            if car.get("number") == driver_number:
+                selected = car
+                break
+
+    if selected is None and driver:
+        needle = driver.strip().casefold()
+        for car in cars:
+            if (
+                needle == str(car.get("id", "")).casefold()
+                or needle in str(car.get("name", "")).casefold()
+            ):
+                selected = car
+                break
+
+    if selected is None:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    return {
+        "session": cached_state.get("session"),
+        "updated_at": cached_state.get("updated_at"),
+        "car": selected,
+        "error": cached_state.get("error"),
+    }
 
 
 @app.get("/api/session")
 async def get_session():
-    """Get info about the current/latest session."""
-    return cached_state.get("session", {"error": "No session loaded"})
+    """Get resolved session info and API status."""
+    return {
+        "session": cached_state.get("session"),
+        "api_status": livef1_client.get_api_status(data_store),
+        "error": cached_state.get("error"),
+    }
+
+
+@app.get("/api/status")
+async def get_status():
+    """Service health/status endpoint for debugging."""
+    api_status = livef1_client.get_api_status(data_store)
+    return {
+        "api_status": api_status,
+        "cached_state_updated_at": cached_state.get("updated_at"),
+        "cached_state_error": cached_state.get("error"),
+        "car_count": len(cached_state.get("cars", [])),
+        "data_source": "livef1 (SignalR)",
+    }
+
+
+@app.post("/api/session/refresh")
+async def refresh_now():
+    """Force an immediate state refresh from the data store."""
+    await refresh_cached_state()
+    return {
+        "ok": bool(cached_state.get("cars")),
+        "session": cached_state.get("session"),
+        "error": cached_state.get("error"),
+        "api_status": livef1_client.get_api_status(data_store),
+    }
 
 
 @app.get("/api/calendar")
 async def get_calendar(year: int = 2026):
-    """Get all race meetings for a year."""
-    meetings = await openf1.get_meetings(year)
+    """Get all race meetings for a given year."""
+    meetings = livef1_client.get_meetings_for_year(year)
     if not meetings:
-        # Fallback to previous year
-        meetings = await openf1.get_meetings(year - 1)
+        meetings = livef1_client.get_meetings_for_year(year - 1)
     return {"year": year, "meetings": meetings or []}
 
-
-# ──── Premium: AI Strategy (Paywall) ────
 
 def check_session_unlocked(session_id: Optional[str] = Header(None)):
     if not session_id or session_id not in unlocked_sessions:
@@ -138,25 +218,30 @@ async def get_ai_insights(session_id: str = Depends(check_session_unlocked)):
     leader = cars[0] if cars else {}
     prompt = (
         f"You are an F1 race engineer. The current session is {session_info.get('meeting_name', 'unknown')} "
-        f"({session_info.get('session_type', 'Race')}). "
+        f"({session_info.get('type', 'Race')}). "
         f"The leader is {leader.get('name', 'unknown')} (P1) on {leader.get('tire', 'unknown')} tires. "
-        f"Provide ONE concise, dramatic broadcast-style insight about the current race situation."
+        "Provide ONE concise, dramatic broadcast-style insight about the current race situation."
     )
 
     try:
         resp = groq_client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a professional Formula 1 race commentator and engineer."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are a professional Formula 1 race commentator and engineer.",
+                },
+                {"role": "user", "content": prompt},
             ],
             model="llama3-8b-8192",
             temperature=0.7,
             max_tokens=80,
         )
         return {"insight": resp.choices[0].message.content}
-    except Exception as e:
-        logger.error(f"Groq error: {e}")
-        return {"insight": f"{leader.get('name', 'The leader')} is setting a blistering pace, but tire degradation is starting to bite."}
+    except Exception as exc:
+        logger.error("Groq error: %s", exc)
+        return {
+            "insight": f"{leader.get('name', 'The leader')} is setting a blistering pace, but tire degradation is starting to bite."
+        }
 
 
 @app.get("/api/pit_projection")
@@ -178,18 +263,20 @@ async def get_pit_projection(driver_number: int, session_id: str = Depends(check
         all_cars=cars,
     )
 
-    # Get AI commentary
     prompt = (
         f"You are an F1 race engineer. {target.get('name')} is currently P{target.get('pos')}. "
         f"If they pit now, they'll lose ~22 seconds and rejoin in P{result['predicted_position']}. "
-        f"Give a one-sentence radio message to the driver about this strategy call."
+        "Give a one-sentence radio message to the driver about this strategy call."
     )
 
     try:
         resp = groq_client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a Formula 1 race engineer speaking to your driver on the radio."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are a Formula 1 race engineer speaking to your driver on the radio.",
+                },
+                {"role": "user", "content": prompt},
             ],
             model="llama3-8b-8192",
             temperature=0.7,
@@ -210,12 +297,14 @@ async def get_yellow_flag_analysis(session_id: str = Depends(check_session_unloc
 
 
 @app.get("/api/ers_prediction")
-async def get_ers_prediction(driver_number: int, laps_remaining: int = 20, session_id: str = Depends(check_session_unlocked)):
+async def get_ers_prediction(
+    driver_number: int,
+    laps_remaining: int = 20,
+    session_id: str = Depends(check_session_unlocked),
+):
     """Predict ERS battery impact for the rest of the race."""
     return predict_ers_impact(str(driver_number), ers_level=70, laps_remaining=laps_remaining)
 
-
-# ──── Stripe & Auth ────
 
 @app.post("/api/webhook/stripe")
 async def stripe_webhook(request: Request):
@@ -227,10 +316,12 @@ async def stripe_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid payload")
     except stripe.error.SignatureVerificationError:
         raise HTTPException(status_code=400, detail="Invalid signature")
+
     if event["type"] == "checkout.session.completed":
         sid = event["data"]["object"].get("client_reference_id")
         if sid:
             unlocked_sessions.add(sid)
+
     return {"status": "success"}
 
 
@@ -242,4 +333,5 @@ async def unlock_session_dev(session_id: str):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

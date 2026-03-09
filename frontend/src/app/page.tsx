@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Activity, Clock, Zap, Lock, Unlock, MessageSquare, ChevronRight, Calendar, Flag, Gauge, Battery, Wind, Thermometer, Cloud, AlertTriangle, Map } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Activity, Clock, Zap, Lock, Unlock, MessageSquare, ChevronRight, Calendar, Flag, Gauge, Thermometer, Cloud, AlertTriangle, Map } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 
 const TIRE_COLORS: Record<string, string> = {
@@ -98,7 +98,7 @@ export default function Home() {
       <div className="min-h-screen bg-black flex items-center justify-center text-white" style={{ fontFamily: "'Outfit', sans-serif" }}>
         <div className="text-center">
           <div className="w-12 h-12 border-2 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-sm tracking-[0.3em] uppercase text-neutral-500 font-bold">Connecting to OpenF1 Live...</p>
+          <p className="text-sm tracking-[0.3em] uppercase text-neutral-500 font-bold">Connecting to F1 Live Timing...</p>
           <p className="text-xs text-neutral-700 mt-2">Loading latest telemetry stream</p>
         </div>
       </div>
@@ -109,12 +109,14 @@ export default function Home() {
   const sess = raceState.session;
   const weather = raceState.weather;
   const hasData = raceState.cars.length > 0;
+  const backendError = raceState.error as string | undefined;
+  const authError = raceState.api_status?.auth_error as string | undefined;
   
   // Base lap time used to approximate map positions (if data missing, assume 90s lap)
   const avgLapTime = raceState.cars?.[0]?.last_lap_time || 90;
 
   return (
-    <main className="h-screen bg-neutral-950 text-white flex flex-col overflow-hidden" style={{ fontFamily: "'Outfit', sans-serif" }}>
+    <main className="h-screen bg-neutral-950 text-white flex flex-col overflow-hidden relative" style={{ fontFamily: "'Outfit', sans-serif" }}>
       
       {/* ═══ HEADER ═══ */}
       <header className="flex items-center justify-between px-6 py-3 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0 z-50">
@@ -164,6 +166,26 @@ export default function Home() {
         </div>
       </header>
 
+      <AnimatePresence>
+        {(backendError || authError) && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            className="px-6 py-3 border-b border-amber-500/30 bg-amber-500/10 text-amber-200 shrink-0"
+          >
+            <p className="text-xs font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-300" />
+              {backendError || authError}
+            </p>
+            {authError && (
+              <p className="text-[11px] text-amber-300/80 mt-1 font-mono">
+                Waiting for a live F1 session. Data will appear automatically when a session starts on the F1 live timing servers.
+              </p>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ═══ RACE CONTROL BANNER ═══ */}
       <AnimatePresence>
         {raceState.race_control?.length > 0 && (
@@ -178,6 +200,43 @@ export default function Home() {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {showCalendar && (
+          <motion.aside
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="absolute right-6 top-20 z-[80] w-[360px] max-h-[70vh] bg-black/95 border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
+          >
+            <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex items-center justify-between">
+              <p className="text-xs tracking-[0.2em] uppercase font-black text-neutral-300">2026 Calendar</p>
+              <button
+                onClick={() => setShowCalendar(false)}
+                className="text-[10px] font-bold text-neutral-400 hover:text-white transition-colors"
+              >
+                CLOSE
+              </button>
+            </div>
+            <div className="max-h-[calc(70vh-48px)] overflow-y-auto p-3 space-y-2">
+              {calendarData.length === 0 && (
+                <p className="text-xs text-neutral-500 p-3">Calendar loading...</p>
+              )}
+              {calendarData.map((meeting: any, idx: number) => (
+                <div key={`${meeting.meeting_key || 'meeting'}-${idx}`} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                  <p className="text-sm font-semibold text-neutral-200">{meeting.meeting_name || meeting.meeting_official_name || 'Meeting'}</p>
+                  <p className="text-[11px] text-neutral-500 mt-1">
+                    {meeting.circuit_short_name || 'Circuit'}{meeting.country_name ? `, ${meeting.country_name}` : ''}
+                  </p>
+                  <p className="text-[10px] font-mono text-neutral-400 mt-1">
+                    {meeting.date_start ? String(meeting.date_start).slice(0, 10) : 'TBD'}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
       <div className="flex-1 flex overflow-hidden p-4 gap-4 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-neutral-900 via-black to-black">
         
         {/* ──── LEFT: STANDINGS ──── */}
@@ -189,7 +248,7 @@ export default function Home() {
           </div>
           <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
             <LayoutGroup>
-              {!hasData && <p className="text-neutral-500 text-sm text-center mt-10 p-4">No cars currently tracked. Waiting for API...</p>}
+              {!hasData && <p className="text-neutral-500 text-sm text-center mt-10 p-4">{backendError || 'No cars currently tracked. Waiting for API...'}</p>}
               {raceState.cars?.map((car: any) => {
                 const isSelected = selectedDriver === car.number;
                 const tireColor = TIRE_COLORS[car.tire?.toUpperCase()] || '#666';

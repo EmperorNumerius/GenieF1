@@ -1,11 +1,10 @@
+livef1
 fastapi
 uvicorn
-fastf1
 groq
 stripe
 discord.py
 websockets
 python-dotenv
-httpx
 python-multipart
 pandas
