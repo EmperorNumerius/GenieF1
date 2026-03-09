@@ -234,12 +234,6 @@ async def stripe_webhook(request: Request):
     return {"status": "success"}
 
 
-@app.post("/api/unlock_dev")
-async def unlock_session_dev(session_id: str):
-    unlocked_sessions.add(session_id)
-    return {"status": f"Unlocked session {session_id}"}
-
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
