@@ -470,7 +470,7 @@ export default function Home() {
                       ].map(s => (
                         <div key={s.label} className="bg-black/40 border border-white/5 rounded-lg py-3">
                            <p className="text-[9px] text-neutral-500 font-bold mb-1">{s.label}</p>
-                           <p className={`font-mono text-sm font-bold ${s.val ? s.color : 'text-neutral-600'}`}>{s.val ? s.val.toFixed(3) : '---'}</p>
+                           <p className={`font-mono text-sm font-bold ${s.val ? s.color : 'text-neutral-600'}`}>{s.val ? (typeof s.val === 'number' ? s.val.toFixed(3) : s.val) : '---'}</p>
                         </div>
                       ))}
                     </div>

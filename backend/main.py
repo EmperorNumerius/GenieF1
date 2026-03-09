@@ -56,6 +56,11 @@ async def refresh_cached_state() -> None:
     state["api_status"] = livef1_client.get_api_status(data_store)
     state["stale"] = bool(state.get("error"))
 
+    # Mark if showing historical data
+    if livef1_client.is_historical_mode():
+        state["historical"] = True
+        state.pop("error", None)  # Don't show error when we have historical data
+
     cached_state = state
 
 
@@ -63,6 +68,14 @@ async def state_refresh_loop() -> None:
     """Background loop that refreshes cached_state from the data store."""
     # Give the livef1 client a moment to connect
     await asyncio.sleep(3)
+
+    # If no live data after initial wait, load the last completed session
+    snap = data_store.snapshot()
+    if not snap["drivers"] and not snap["car_data"]:
+        logger.info("No live session detected — loading most recent historical session...")
+        await asyncio.get_event_loop().run_in_executor(
+            None, livef1_client.load_latest_historical_session, data_store
+        )
 
     while True:
         try:

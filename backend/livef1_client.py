@@ -498,3 +498,282 @@ def get_meetings_for_year(year: int) -> List[Dict[str, Any]]:
     except Exception as exc:
         logger.warning("Failed to get meetings for year %d: %s", year, exc)
         return []
+
+
+# ─── Historical Session Loader ────────────────────────────────────────────────
+
+_historical_loaded = False
+_historical_session_info: Dict[str, Any] = {}
+
+
+def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
+    """
+    Load the most recent completed session into the data store.
+    Called as a fallback when no live session is streaming.
+    Returns True if data was loaded successfully.
+    """
+    global _historical_loaded, _historical_session_info
+
+    if _historical_loaded:
+        return True
+
+    try:
+        import livef1
+        import pandas as pd
+    except ImportError as e:
+        logger.error("livef1/pandas not available: %s", e)
+        return False
+
+    logger.info("Loading most recent historical session...")
+
+    # Try current year first, then fall back
+    session = None
+    for year in [2024, 2023]:
+        try:
+            season = livef1.get_season(year)
+            if not season.meetings:
+                continue
+
+            # Get the last meeting (most recent)
+            last_meeting = season.meetings[-1]
+            meeting_name = getattr(last_meeting, "name", "")
+            meeting_key = last_meeting.key
+
+            # Try loading the Race session first, then Qualifying
+            for session_type in ["Race", "Qualifying", "Sprint", "Practice 3", "Practice 1"]:
+                try:
+                    session = livef1.get_session(
+                        season=year,
+                        meeting_key=meeting_key,
+                        session_identifier=session_type,
+                    )
+                    if session:
+                        logger.info("Loaded historical session: %s %s %d", meeting_name, session_type, year)
+                        break
+                except Exception:
+                    continue
+
+            if session:
+                break
+        except Exception as exc:
+            logger.warning("Failed to load season %d: %s", year, exc)
+            continue
+
+    if not session:
+        logger.warning("No historical session could be loaded.")
+        return False
+
+    # Process the session data using livef1's silver layer
+    try:
+        session.generate(silver=True)
+    except Exception as exc:
+        logger.warning("Silver generation failed, continuing with raw data: %s", exc)
+
+    # ── Extract Laps Data ──────────────────────────────────────────────────
+    try:
+        laps_df = session.get_laps()
+        if laps_df is not None and not laps_df.empty:
+            # Get the last lap for each driver
+            driver_groups = laps_df.groupby("DriverNo")
+            for driver_no, driver_laps in driver_groups:
+                dn = str(int(driver_no))
+                last_lap = driver_laps.iloc[-1]
+
+                # Build timing data from laps
+                timing = {
+                    "DriverNo": dn,
+                    "Position": _safe_value(last_lap, "Position"),
+                    "NumberOfLaps": _safe_value(last_lap, "LapNo", last_lap.get("lap_number") if hasattr(last_lap, "get") else len(driver_laps)),
+                    "LastLapTime_Value": _format_timedelta(last_lap, "LapTime"),
+                    "Sectors_1_Value": _format_timedelta(last_lap, "Sector1_Time"),
+                    "Sectors_2_Value": _format_timedelta(last_lap, "Sector2_Time"),
+                    "Sectors_3_Value": _format_timedelta(last_lap, "Sector3_Time"),
+                    "GapToLeader_Value": _safe_value(last_lap, "GapToLeader"),
+                    "IntervalToPositionAhead_Value": _safe_value(last_lap, "IntervalToPositionAhead"),
+                    "NumberOfPitStops": _safe_value(last_lap, "NoPits", 0),
+                }
+                data_store.update_timing([timing])
+
+                # Tire info
+                compound = _safe_value(last_lap, "Compound", "Unknown")
+                tire_age = _safe_value(last_lap, "TyreAge", 0)
+                data_store.update_current_tyres([{
+                    "DriverNo": dn,
+                    "Compound": compound,
+                    "TyreAge": tire_age,
+                }])
+
+            logger.info("Loaded %d drivers' lap data from historical session.", len(driver_groups))
+    except Exception as exc:
+        logger.warning("Failed to load laps data: %s", exc)
+
+    # ── Extract Car Telemetry (last entry per driver) ──────────────────────
+    try:
+        telem_df = session.get_car_telemetry()
+        if telem_df is not None and not telem_df.empty:
+            driver_groups = telem_df.groupby("DriverNo")
+            for driver_no, driver_telem in driver_groups:
+                dn = str(int(driver_no))
+                last_entry = driver_telem.iloc[-1]
+
+                car = {
+                    "DriverNo": dn,
+                    "speed": _safe_value(last_entry, "Speed", 0),
+                    "rpm": _safe_value(last_entry, "RPM", 0),
+                    "n_gear": _safe_value(last_entry, "GearNo", 0),
+                    "throttle": _safe_value(last_entry, "Throttle", 0),
+                    "brake": _safe_value(last_entry, "Brake", 0),
+                    "drs": _safe_value(last_entry, "DRS", 0),
+                    "Utc": str(_safe_value(last_entry, "Utc", "")),
+                }
+                data_store.update_car_data([car])
+
+                # Position from telemetry
+                pos_rec = {
+                    "DriverNo": dn,
+                    "X": _safe_value(last_entry, "X", 0),
+                    "Y": _safe_value(last_entry, "Y", 0),
+                    "Z": _safe_value(last_entry, "Z", 0),
+                    "Status": "OnTrack",
+                }
+                data_store.update_positions([pos_rec])
+
+            logger.info("Loaded telemetry for %d drivers.", len(driver_groups))
+    except Exception as exc:
+        logger.warning("Failed to load telemetry: %s", exc)
+
+    # ── Extract Driver List from raw data ──────────────────────────────────
+    try:
+        driver_data = session.get_data(dataNames="DriverList")
+        if driver_data is not None:
+            raw = driver_data.value if hasattr(driver_data, "value") else driver_data
+            if isinstance(raw, dict):
+                for dn, info in raw.items():
+                    if isinstance(info, dict):
+                        info["RacingNumber"] = str(info.get("RacingNumber", dn))
+                        data_store.update_drivers([info])
+            elif isinstance(raw, list):
+                for info in raw:
+                    if isinstance(info, dict):
+                        data_store.update_drivers([info])
+            logger.info("Loaded driver list from historical session.")
+    except Exception as exc:
+        logger.warning("Failed to load driver list: %s", exc)
+
+    # ── Extract Weather ────────────────────────────────────────────────────
+    try:
+        weather_raw = session.get_data(dataNames="WeatherData")
+        if weather_raw is not None:
+            raw = weather_raw.value if hasattr(weather_raw, "value") else weather_raw
+            if isinstance(raw, dict):
+                # Typically {timestamp: {AirTemp, TrackTemp, ...}, ...}
+                last_entry = list(raw.values())[-1] if raw else {}
+                if isinstance(last_entry, dict):
+                    data_store.update_weather([last_entry])
+            elif isinstance(raw, list) and raw:
+                last_entry = raw[-1]
+                if isinstance(last_entry, (list, tuple)) and len(last_entry) >= 2:
+                    data_store.update_weather([last_entry[1]])
+                elif isinstance(last_entry, dict):
+                    data_store.update_weather([last_entry])
+            logger.info("Loaded weather data from historical session.")
+    except Exception as exc:
+        logger.warning("Failed to load weather: %s", exc)
+
+    # ── Extract Race Control Messages ──────────────────────────────────────
+    try:
+        rc_data = session.get_data(dataNames="RaceControlMessages")
+        if rc_data is not None:
+            raw = rc_data.value if hasattr(rc_data, "value") else rc_data
+            if isinstance(raw, dict):
+                messages = raw.get("Messages", {})
+                if isinstance(messages, dict):
+                    for msg in messages.values():
+                        if isinstance(msg, dict):
+                            data_store.update_race_control([msg])
+                elif isinstance(messages, list):
+                    for msg in messages:
+                        if isinstance(msg, dict):
+                            data_store.update_race_control([msg])
+            logger.info("Loaded race control messages.")
+    except Exception as exc:
+        logger.warning("Failed to load race control: %s", exc)
+
+    # ── Build session info ─────────────────────────────────────────────────
+    meeting_obj = getattr(session, "_meeting", None) or getattr(session, "meeting", None)
+    session_name = getattr(session, "name", getattr(session, "session_name", "Race"))
+
+    circuit_info = {}
+    country_info = {}
+    meeting_info_name = meeting_name
+
+    if meeting_obj:
+        circuit_raw = getattr(meeting_obj, "circuit", None)
+        if isinstance(circuit_raw, dict):
+            circuit_info = circuit_raw
+        country_raw = getattr(meeting_obj, "country", None)
+        if isinstance(country_raw, dict):
+            country_info = country_raw
+        meeting_info_name = getattr(meeting_obj, "name", meeting_name)
+
+    _historical_session_info.update({
+        "Key": getattr(session, "key", None),
+        "Name": session_name,
+        "Type": session_name,
+        "Meeting": {
+            "Name": meeting_info_name,
+            "OfficialName": getattr(meeting_obj, "officialname", meeting_info_name) if meeting_obj else meeting_info_name,
+            "Circuit": circuit_info,
+            "Country": country_info,
+        },
+        "StartDate": str(getattr(session, "start_date", "")),
+        "EndDate": str(getattr(session, "end_date", "")),
+        "_historical": True,
+    })
+    data_store.update_session_info([_historical_session_info])
+
+    _historical_loaded = True
+    logger.info("Historical session loaded successfully into data store.")
+    return True
+
+
+def _safe_value(row, col, default=None):
+    """Safely extract a value from a pandas row or dict."""
+    try:
+        import pandas as pd
+        val = row[col] if col in (row.index if hasattr(row, "index") else row) else default
+        if pd.isna(val):
+            return default
+        # Convert numpy types to Python native
+        if hasattr(val, "item"):
+            return val.item()
+        return val
+    except Exception:
+        return default
+
+
+def _format_timedelta(row, col):
+    """Format a timedelta column into a readable string like '1:23.456'."""
+    try:
+        import pandas as pd
+        val = row[col] if col in (row.index if hasattr(row, "index") else row) else None
+        if val is None or pd.isna(val):
+            return None
+        if isinstance(val, pd.Timedelta):
+            total_seconds = val.total_seconds()
+            if total_seconds <= 0:
+                return None
+            minutes = int(total_seconds // 60)
+            seconds = total_seconds % 60
+            if minutes > 0:
+                return f"{minutes}:{seconds:06.3f}"
+            return f"{seconds:.3f}"
+        return str(val)
+    except Exception:
+        return None
+
+
+def is_historical_mode() -> bool:
+    """Check if we're displaying historical data (not live)."""
+    return _historical_loaded and not _historical_session_info.get("_live_override")
+
