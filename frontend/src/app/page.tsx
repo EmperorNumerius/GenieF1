@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Activity, Clock, Zap, Lock, Unlock, MessageSquare, ChevronRight, Calendar, Flag, Gauge, Battery, Wind, Thermometer, Cloud, AlertTriangle, Map } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Activity, Clock, Zap, Lock, Unlock, MessageSquare, ChevronRight, Calendar, Flag, Gauge, Thermometer, Cloud, Map } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 
 const TIRE_COLORS: Record<string, string> = {
@@ -23,13 +23,17 @@ function formatInterval(val: number | string | null | undefined): string {
 }
 
 export default function Home() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [raceState, setRaceState] = useState<any>(null);
   const [selectedDriver, setSelectedDriver] = useState<number | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isUnlocked, setIsUnlocked] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pitProjection, setPitProjection] = useState<any>(null);
   const [isProjecting, setIsProjecting] = useState(false);
   const [insight, setInsight] = useState<string | null>(null);
   const [showCalendar, setShowCalendar] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any
   const [calendarData, setCalendarData] = useState<any[]>([]);
   const sessionId = useRef('user_' + Math.floor(Math.random() * 99999));
   const wsRef = useRef<WebSocket | null>(null);
@@ -75,9 +79,8 @@ export default function Home() {
     return () => clearInterval(iv);
   }, [isUnlocked]);
 
-  const handleDevUnlock = useCallback(async () => {
-    await fetch(`http://localhost:8000/api/unlock_dev?session_id=${sessionId.current}`, { method: 'POST' });
-    setIsUnlocked(true);
+  const handleCheckout = useCallback(() => {
+    alert("Stripe checkout integration pending");
   }, []);
 
   const handlePitProjection = useCallback(async () => {
@@ -105,6 +108,7 @@ export default function Home() {
     );
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const selected = selectedDriver ? raceState.cars.find((c: any) => c.number === selectedDriver) : null;
   const sess = raceState.session;
   const weather = raceState.weather;
@@ -153,7 +157,7 @@ export default function Home() {
           </div>
 
           {!isUnlocked ? (
-            <button onClick={handleDevUnlock} className="bg-red-600 hover:bg-red-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 border border-red-400/50 shadow-[0_0_20px_rgba(220,38,38,0.5)] transition-all duration-300 transform hover:scale-105 active:scale-95">
+            <button onClick={handleCheckout} className="bg-red-600 hover:bg-red-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 border border-red-400/50 shadow-[0_0_20px_rgba(220,38,38,0.5)] transition-all duration-300 transform hover:scale-105 active:scale-95">
               <Lock className="w-4 h-4" /> UNLOCK PREMIUM
             </button>
           ) : (
@@ -168,6 +172,7 @@ export default function Home() {
       <AnimatePresence>
         {raceState.race_control?.length > 0 && (
           <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} className="flex gap-2 px-6 py-2 border-b border-white/5 bg-neutral-900/50 overflow-x-auto shrink-0 scrollbar-hide">
+            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
             {raceState.race_control.map((rc: any, i: number) => (
               <span key={i} className={`text-xs px-3 py-1 rounded-md font-bold whitespace-nowrap border ${rc.flag === 'RED' ? 'bg-red-600/20 text-red-500 border-red-600/30' : rc.flag === 'YELLOW' ? 'bg-yellow-500/20 text-yellow-500 border-yellow-500/30' : 'bg-white/5 text-neutral-400 border-white/10'}`}>
                 <Flag className="w-3 h-3 inline mr-1.5 mb-0.5" />
@@ -190,6 +195,7 @@ export default function Home() {
           <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
             <LayoutGroup>
               {!hasData && <p className="text-neutral-500 text-sm text-center mt-10 p-4">No cars currently tracked. Waiting for API...</p>}
+              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
               {raceState.cars?.map((car: any) => {
                 const isSelected = selectedDriver === car.number;
                 const tireColor = TIRE_COLORS[car.tire?.toUpperCase()] || '#666';
@@ -278,6 +284,7 @@ export default function Home() {
                     />
 
                     {/* Plot Drivers on Path using SVG motion */}
+                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                     {raceState.cars?.map((car: any) => {
                       // Approximate progress based on gap to leader
                       const gap = typeof car.gap_to_leader === 'number' ? car.gap_to_leader : (car.pos - 1) * 2;
@@ -330,7 +337,7 @@ export default function Home() {
                <div className="flex-1 flex items-center justify-center p-6 border border-dashed border-white/10 rounded-xl bg-white/5">
                  <p className="text-sm font-mono text-neutral-500 text-center">
                    <Lock className="w-5 h-5 inline mr-2 text-neutral-600 mb-1" />
-                   AI features locked. <button onClick={handleDevUnlock} className="text-red-400 font-bold hover:underline mix-blend-screen">Unlock Premium</button> to access predictive re-entry & radio hints.
+                   AI features locked. <button onClick={handleCheckout} className="text-red-400 font-bold hover:underline mix-blend-screen">Unlock Premium</button> to access predictive re-entry & radio hints.
                  </p>
                </div>
             ) : pitProjection ? (
