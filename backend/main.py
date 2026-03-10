@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from groq import Groq
+from groq import AsyncGroq
 from pydantic import BaseModel
 import stripe
 
@@ -21,7 +21,11 @@ from simulation import predict_ers_impact, predict_pit_stop, predict_yellow_flag
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_dummy")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "dummy_groq_key")
-groq_client = Groq(api_key=GROQ_API_KEY)
+# ⚡ Bolt: Use AsyncGroq instead of synchronous Groq client.
+# Why: Calling synchronous network clients inside FastAPI's async endpoints blocks the main event loop.
+# Impact: Prevents stalling of concurrent background polling and live WebSocket streams, significantly increasing throughput and responsiveness.
+# Measurement: Under load, latency of /ws/race_data and other endpoints should remain consistently low even during Groq calls.
+groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +244,7 @@ async def get_ai_insights(session_id: str = Depends(check_session_unlocked)):
     )
 
     try:
-        resp = groq_client.chat.completions.create(
+        resp = await groq_client.chat.completions.create(
             messages=[
                 {
                     "role": "system",
@@ -286,7 +290,7 @@ async def get_pit_projection(driver_number: int, session_id: str = Depends(check
     )
 
     try:
-        resp = groq_client.chat.completions.create(
+        resp = await groq_client.chat.completions.create(
             messages=[
                 {
                     "role": "system",
