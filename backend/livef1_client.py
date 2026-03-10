@@ -300,6 +300,35 @@ def start_livef1_thread(data_store: LiveF1DataStore) -> threading.Thread:
 
 # ─── Race State Builder ───────────────────────────────────────────────────────
 
+# Fallback driver info for F1 grid
+DRIVER_INFO = {
+    1: {"tla": "VER", "name": "Max Verstappen", "team": "Red Bull Racing"},
+    2: {"tla": "SAR", "name": "Logan Sargeant", "team": "Williams"},
+    3: {"tla": "RIC", "name": "Daniel Ricciardo", "team": "RB"},
+    4: {"tla": "NOR", "name": "Lando Norris", "team": "McLaren"},
+    7: {"tla": "DOO", "name": "Jack Doohan", "team": "Alpine"},
+    10: {"tla": "GAS", "name": "Pierre Gasly", "team": "Alpine"},
+    11: {"tla": "PER", "name": "Sergio Perez", "team": "Red Bull Racing"},
+    12: {"tla": "ANT", "name": "Kimi Antonelli", "team": "Mercedes"},
+    14: {"tla": "ALO", "name": "Fernando Alonso", "team": "Aston Martin"},
+    16: {"tla": "LEC", "name": "Charles Leclerc", "team": "Ferrari"},
+    18: {"tla": "STR", "name": "Lance Stroll", "team": "Aston Martin"},
+    20: {"tla": "MAG", "name": "Kevin Magnussen", "team": "Haas F1 Team"},
+    22: {"tla": "TSU", "name": "Yuki Tsunoda", "team": "RB"},
+    23: {"tla": "ALB", "name": "Alexander Albon", "team": "Williams"},
+    24: {"tla": "ZOU", "name": "Zhou Guanyu", "team": "Kick Sauber"},
+    27: {"tla": "HUL", "name": "Nico Hulkenberg", "team": "Haas F1 Team"},
+    30: {"tla": "LAW", "name": "Liam Lawson", "team": "RB"},
+    31: {"tla": "OCO", "name": "Esteban Ocon", "team": "Haas F1 Team"},
+    43: {"tla": "COL", "name": "Franco Colapinto", "team": "Williams"},
+    44: {"tla": "HAM", "name": "Lewis Hamilton", "team": "Ferrari"},
+    50: {"tla": "BEA", "name": "Oliver Bearman", "team": "Haas F1 Team"},
+    55: {"tla": "SAI", "name": "Carlos Sainz", "team": "Williams"},
+    63: {"tla": "RUS", "name": "George Russell", "team": "Mercedes"},
+    77: {"tla": "BOT", "name": "Valtteri Bottas", "team": "Kick Sauber"},
+    81: {"tla": "PIA", "name": "Oscar Piastri", "team": "McLaren"},
+}
+
 def get_full_race_state(data_store: LiveF1DataStore) -> Dict[str, Any]:
     """
     Build a race state dict matching the frontend's expected JSON shape.
@@ -341,12 +370,15 @@ def get_full_race_state(data_store: LiveF1DataStore) -> Dict[str, Any]:
         tyres = tyres_map.get(dn, {})
         stint = stints_map.get(dn, {})
 
+        driver_num_int = _as_int(dn, 0)
+        fallback = DRIVER_INFO.get(driver_num_int, {})
+
         # Driver identity
         first_name = driver.get("FirstName", driver.get("first_name", ""))
         last_name = driver.get("LastName", driver.get("last_name", ""))
-        full_name = f"{first_name} {last_name}".strip() or driver.get("FullName", f"Driver {dn}")
-        tla = driver.get("Tla", driver.get("name_acronym", dn))
-        team_name = driver.get("TeamName", driver.get("team_name", ""))
+        full_name = f"{first_name} {last_name}".strip() or driver.get("FullName") or fallback.get("name") or f"Driver {dn}"
+        tla = driver.get("Tla", driver.get("name_acronym")) or fallback.get("tla") or str(dn)
+        team_name = driver.get("TeamName", driver.get("team_name")) or fallback.get("team") or ""
         team_color = driver.get("TeamColour", "")
         if team_color and not str(team_color).startswith("#"):
             team_color = f"#{team_color}"
@@ -399,6 +431,7 @@ def get_full_race_state(data_store: LiveF1DataStore) -> Dict[str, Any]:
             "sector_1": sector_1,
             "sector_2": sector_2,
             "sector_3": sector_3,
+            "pos_diff": timing.get("PosDiff"),
             "location": {
                 "x": _as_float(pos.get("X", 0), 0.0),
                 "y": _as_float(pos.get("Y", 0), 0.0),
@@ -603,9 +636,21 @@ def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
                 dn = str(int(driver_no)) if not isinstance(driver_no, str) else driver_no
                 last_lap = driver_laps.iloc[-1]
 
+                first_lap = driver_laps.iloc[0]
+                start_pos = _safe_value(first_lap, "Position")
+                curr_pos = _safe_value(last_lap, "Position")
+                pos_diff = 0
+                try:
+                    if start_pos and curr_pos:
+                        pos_diff = int(start_pos) - int(curr_pos) # Positive is positions gained
+                except ValueError:
+                    pass
+
                 timing = {
                     "DriverNo": dn,
-                    "Position": _safe_value(last_lap, "Position"),
+                    "Position": curr_pos,
+                    "StartPos": start_pos,
+                    "PosDiff": pos_diff,
                     "NumberOfLaps": _safe_value(last_lap, "LapNo", len(driver_laps)),
                     "LastLapTime_Value": _format_timedelta(last_lap, "LapTime"),
                     "Sectors_1_Value": _format_timedelta(last_lap, "Sector1_Time"),
