@@ -68,6 +68,10 @@ class LiveF1DataStore:
         self.current_tyres: Dict[str, Dict[str, Any]] = {}     # CurrentTyres
         self.tyre_stints: Dict[str, Dict[str, Any]] = {}       # TyreStintSeries
 
+        # Position history for racing lines (last N entries per driver)
+        self.position_history: Dict[str, deque] = {}           # deque of {x, y}
+        self.track_outline: List[List[float]] = []             # [[x,y], ...]
+
         # Session-level state
         self.session_info: Dict[str, Any] = {}                 # SessionInfo
         self.track_status: Dict[str, Any] = {}                 # TrackStatus
@@ -94,6 +98,13 @@ class LiveF1DataStore:
                 dn = str(rec.get("DriverNo", ""))
                 if dn:
                     self.positions[dn] = rec
+                    # Track position history for racing lines
+                    x = rec.get("X", 0)
+                    y = rec.get("Y", 0)
+                    if x or y:
+                        if dn not in self.position_history:
+                            self.position_history[dn] = deque(maxlen=300)
+                        self.position_history[dn].append([float(x), float(y)])
             self._mark_updated()
 
     def update_drivers(self, records: list):
@@ -174,6 +185,8 @@ class LiveF1DataStore:
                 "timing_data": dict(self.timing_data),
                 "current_tyres": dict(self.current_tyres),
                 "tyre_stints": dict(self.tyre_stints),
+                "position_history": {dn: list(q) for dn, q in self.position_history.items()},
+                "track_outline": list(self.track_outline),
                 "session_info": dict(self.session_info),
                 "track_status": dict(self.track_status),
                 "weather": dict(self.weather),
@@ -526,37 +539,49 @@ def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
 
     logger.info("Loading most recent historical session...")
 
-    # Try current year first, then fall back
+    # Try 2026 Australian GP first, then fall back through recent years
     session = None
-    for year in [2024, 2023]:
+    meeting_name = ""
+    _SESSION_SEARCH = [
+        (2026, 1279, "Race"),       # 2026 Australian GP
+        (2026, 1279, "Qualifying"),
+        (2024, None, "Race"),       # Fallback: last race of 2024
+        (2023, None, "Race"),
+    ]
+
+    for year, meeting_key_override, session_type in _SESSION_SEARCH:
         try:
             season = livef1.get_season(year)
             if not season.meetings:
                 continue
 
-            # Get the last meeting (most recent)
-            last_meeting = season.meetings[-1]
-            meeting_name = getattr(last_meeting, "name", "")
-            meeting_key = last_meeting.key
-
-            # Try loading the Race session first, then Qualifying
-            for session_type in ["Race", "Qualifying", "Sprint", "Practice 3", "Practice 1"]:
-                try:
-                    session = livef1.get_session(
-                        season=year,
-                        meeting_key=meeting_key,
-                        session_identifier=session_type,
-                    )
-                    if session:
-                        logger.info("Loaded historical session: %s %s %d", meeting_name, session_type, year)
+            if meeting_key_override:
+                # Find the specific meeting by key
+                target = None
+                for m in season.meetings:
+                    if m.key == meeting_key_override:
+                        target = m
                         break
-                except Exception:
+                if not target:
                     continue
+                meeting_name = getattr(target, "name", "")
+                mk = target.key
+            else:
+                # Fall back to last meeting in season
+                target = season.meetings[-1]
+                meeting_name = getattr(target, "name", "")
+                mk = target.key
 
+            session = livef1.get_session(
+                season=year,
+                meeting_key=mk,
+                session_identifier=session_type,
+            )
             if session:
+                logger.info("Loaded historical session: %s %s %d", meeting_name, session_type, year)
                 break
         except Exception as exc:
-            logger.warning("Failed to load season %d: %s", year, exc)
+            logger.warning("Failed to load %d/%s/%s: %s", year, meeting_key_override, session_type, exc)
             continue
 
     if not session:
@@ -573,17 +598,15 @@ def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
     try:
         laps_df = session.get_laps()
         if laps_df is not None and not laps_df.empty:
-            # Get the last lap for each driver
             driver_groups = laps_df.groupby("DriverNo")
             for driver_no, driver_laps in driver_groups:
-                dn = str(int(driver_no))
+                dn = str(int(driver_no)) if not isinstance(driver_no, str) else driver_no
                 last_lap = driver_laps.iloc[-1]
 
-                # Build timing data from laps
                 timing = {
                     "DriverNo": dn,
                     "Position": _safe_value(last_lap, "Position"),
-                    "NumberOfLaps": _safe_value(last_lap, "LapNo", last_lap.get("lap_number") if hasattr(last_lap, "get") else len(driver_laps)),
+                    "NumberOfLaps": _safe_value(last_lap, "LapNo", len(driver_laps)),
                     "LastLapTime_Value": _format_timedelta(last_lap, "LapTime"),
                     "Sectors_1_Value": _format_timedelta(last_lap, "Sector1_Time"),
                     "Sectors_2_Value": _format_timedelta(last_lap, "Sector2_Time"),
@@ -594,26 +617,44 @@ def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
                 }
                 data_store.update_timing([timing])
 
-                # Tire info
                 compound = _safe_value(last_lap, "Compound", "Unknown")
                 tire_age = _safe_value(last_lap, "TyreAge", 0)
                 data_store.update_current_tyres([{
-                    "DriverNo": dn,
-                    "Compound": compound,
-                    "TyreAge": tire_age,
+                    "DriverNo": dn, "Compound": compound, "TyreAge": tire_age,
                 }])
-
-            logger.info("Loaded %d drivers' lap data from historical session.", len(driver_groups))
+            logger.info("Loaded %d drivers' lap data.", len(driver_groups))
     except Exception as exc:
         logger.warning("Failed to load laps data: %s", exc)
 
-    # ── Extract Car Telemetry (last entry per driver) ──────────────────────
+    # ── Extract Car Telemetry + Track Outline + Position Trails ─────────────
     try:
         telem_df = session.get_car_telemetry()
         if telem_df is not None and not telem_df.empty:
+            # --- Track outline: one driver, one clean lap, downsampled ---
+            try:
+                leader_dn = str(int(telem_df["DriverNo"].mode().iloc[0]))
+                leader_data = telem_df[telem_df["DriverNo"].astype(str) == leader_dn]
+                # Pick a mid-race lap for a clean outline
+                laps = leader_data["LapNo"].unique()
+                mid_lap = laps[len(laps) // 2] if len(laps) > 2 else laps[0]
+                one_lap = leader_data[leader_data["LapNo"] == mid_lap]
+
+                if not one_lap.empty and "X" in one_lap.columns and "Y" in one_lap.columns:
+                    coords = one_lap[["X", "Y"]].dropna()
+                    # Downsample to ~200 points for smooth SVG
+                    step = max(1, len(coords) // 200)
+                    outline = coords.iloc[::step][["X", "Y"]].values.tolist()
+                    # Convert numpy to float
+                    outline = [[float(x), float(y)] for x, y in outline]
+                    data_store.track_outline = outline
+                    logger.info("Track outline extracted: %d points from lap %s", len(outline), mid_lap)
+            except Exception as exc:
+                logger.warning("Could not extract track outline: %s", exc)
+
+            # --- Per-driver: last telemetry entry + position trail ---
             driver_groups = telem_df.groupby("DriverNo")
             for driver_no, driver_telem in driver_groups:
-                dn = str(int(driver_no))
+                dn = str(int(driver_no)) if not isinstance(driver_no, str) else driver_no
                 last_entry = driver_telem.iloc[-1]
 
                 car = {
@@ -628,7 +669,6 @@ def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
                 }
                 data_store.update_car_data([car])
 
-                # Position from telemetry
                 pos_rec = {
                     "DriverNo": dn,
                     "X": _safe_value(last_entry, "X", 0),
@@ -638,7 +678,16 @@ def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
                 }
                 data_store.update_positions([pos_rec])
 
-            logger.info("Loaded telemetry for %d drivers.", len(driver_groups))
+                # Position trail (last 2 laps of positions for racing lines)
+                if "X" in driver_telem.columns and "Y" in driver_telem.columns:
+                    recent = driver_telem.tail(600)  # ~2 laps worth
+                    step = max(1, len(recent) // 200)
+                    trail = recent[["X", "Y"]].dropna().iloc[::step].values.tolist()
+                    trail = [[float(x), float(y)] for x, y in trail]
+                    with data_store._lock:
+                        data_store.position_history[dn] = deque(trail, maxlen=300)
+
+            logger.info("Loaded telemetry + trails for %d drivers.", len(driver_groups))
     except Exception as exc:
         logger.warning("Failed to load telemetry: %s", exc)
 

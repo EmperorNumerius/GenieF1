@@ -52,14 +52,17 @@ async def refresh_cached_state() -> None:
     state = livef1_client.get_full_race_state(data_store)
     session_info = livef1_client.get_session_info(data_store)
 
+    snap = data_store.snapshot()
     state["session"] = session_info
     state["api_status"] = livef1_client.get_api_status(data_store)
     state["stale"] = bool(state.get("error"))
+    state["track_outline"] = snap.get("track_outline", [])
+    state["position_trails"] = snap.get("position_history", {})
 
     # Mark if showing historical data
     if livef1_client.is_historical_mode():
         state["historical"] = True
-        state.pop("error", None)  # Don't show error when we have historical data
+        state.pop("error", None)
 
     cached_state = state
 
@@ -347,4 +350,4 @@ async def unlock_session_dev(session_id: str):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0")

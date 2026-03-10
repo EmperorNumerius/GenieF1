@@ -4,8 +4,8 @@ import livef1
 print("livef1 version:", livef1.__version__)
 
 # Test historical data access
-season = livef1.get_season(2024)
-print(f"Season 2024: {len(season.meetings)} meetings")
+season = livef1.get_season(2026)
+print(f"Season 2026: {len(season.meetings)} meetings")
 for m in season.meetings[:5]:
     print(f"  {m.key}: {getattr(m, 'name', '?')} — {getattr(m, 'location', '?')}")
 
