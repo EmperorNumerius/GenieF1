@@ -1,0 +1,3 @@
+## 2024-03-11 - Converting motion.div to motion.button for a11y
+**Learning:** When using Framer Motion to create interactive lists (like driver standings), replacing a clickable `<motion.div>` with `<motion.button>` instantly provides native keyboard focus and activation without losing animation capabilities. Adding `w-full` and `text-left` is usually necessary to prevent the browser's default button styling from breaking the existing layout.
+**Action:** Always prefer native interactive elements (like `<button>`) combined with Framer Motion over adding `onClick` and `tabIndex` to `div`s to ensure robust accessibility.
