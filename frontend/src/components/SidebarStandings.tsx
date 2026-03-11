@@ -49,7 +49,7 @@ export function SidebarStandings({
             )}&color=fff&bold=true&size=64`;
 
             return (
-              <motion.div
+              <motion.button
                 layout
                 key={car.number}
                 onClick={() => setSelectedDriver(car.number)}
@@ -57,7 +57,8 @@ export function SidebarStandings({
                   e.preventDefault();
                   setContextMenu({ x: e.pageX, y: e.pageY, driverId: car.number });
                 }}
-                className={`flex items-center gap-3 px-3 py-2 cursor-pointer border-l-[3px] border-b border-b-white/5 transition-all duration-300 ${
+                aria-label={`Select driver ${car.id}, currently in position ${car.pos || 'unknown'}`}
+                className={`w-full text-left flex items-center gap-3 px-3 py-2 cursor-pointer border-l-[3px] border-b border-b-white/5 transition-all duration-300 focus-visible:outline-none focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/20 ${
                   isSelected
                     ? 'bg-gradient-to-r from-white/10 to-transparent border-l-current shadow-inner'
                     : 'hover:bg-white/5 border-l-transparent'
@@ -119,7 +120,7 @@ export function SidebarStandings({
                     </div>
                   </div>
                 </div>
-              </motion.div>
+              </motion.button>
             );
           })}
         </LayoutGroup>
