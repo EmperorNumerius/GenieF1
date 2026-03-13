@@ -60,3 +60,36 @@
 2026-03-09 18:14:33 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
 2026-03-09 18:14:33 - livef1 - INFO - 'DriverList' has been fetched and parsed
 2026-03-09 18:14:33 - livef1 - INFO - 'WeatherData' has been fetched and parsed
+2026-03-13 04:37:24 - livef1 - INFO - Starting LiveF1 live timing client
+2026-03-13 04:37:27 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 04:37:27 - livef1 - INFO - Got the meeting.
+2026-03-13 04:37:27 - livef1 - INFO - Selected meeting/session is:
+	session_name : Race
+2026-03-13 04:37:27 - livef1 - INFO - The session was received successfully.
+2026-03-13 04:37:28 - livef1 - INFO - Fetching drivers.
+2026-03-13 04:37:30 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-13 04:37:30 - livef1 - INFO - Starting grid have been loaded and saved to 'session.startingGrid'.
+2026-03-13 04:37:30 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-13 04:37:30 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-13 04:37:30 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-13 04:37:30 - livef1 - INFO - Topics to be loaded : ['SessionStatus', 'TrackStatus', 'RaceControlMessages', 'CarData.z', 'TimingData', 'Position.z', 'TyreStintSeries', 'track_regions']
+2026-03-13 04:37:30 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-13 04:37:30 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-13 04:37:31 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-13 04:37:35 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-13 04:37:36 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-13 04:37:41 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-13 04:37:42 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-13 04:37:55 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-13 04:37:55 - livef1 - INFO - Silver tables are being generated.
+2026-03-13 04:38:03 - livef1 - INFO - 'PitStopSeries' has been fetched and parsed
+2026-03-13 04:38:03 - livef1 - ERROR - Failed to generate silver table 'laps': Invalid value for dtype 'str'. Value should be a string or missing value (or array of those).
+2026-03-13 04:38:14 - livef1 - ERROR - Failed to generate silver table 'carTelemetry': Invalid value for dtype 'str'. Value should be a string or missing value (or array of those).
+2026-03-13 04:38:14 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-13 04:38:14 - livef1 - INFO - Laps table is not generated yet. Use .generate() to load required data and generate silver tables.
+2026-03-13 04:38:14 - livef1 - INFO - Car Telemetry table is not generated yet. Use .generate() to load required data and generate silver tables.
+2026-03-13 04:38:15 - livef1 - INFO - 'DriverList' has been fetched and parsed
+2026-03-13 04:38:15 - livef1 - INFO - 'WeatherData' has been fetched and parsed
