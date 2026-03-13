@@ -1,5 +1,5 @@
 
-> frontend@0.1.0 dev
+> frontend@0.1.0 dev /app/frontend
 > next dev
 
 ▲ Next.js 16.1.6 (Turbopack)
@@ -7,12 +7,10 @@
 - Network:       http://192.168.0.2:3000
 
 ✓ Starting...
-Attention: Next.js now collects completely anonymous telemetry regarding usage.
-This information is used to shape Next.js' roadmap and prioritize features.
-You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
-https://nextjs.org/telemetry
-
-✓ Ready in 1827ms
+✓ Ready in 1072ms
 ○ Compiling / ...
- GET / 200 in 4.8s (compile: 4.4s, render: 390ms)
- GET / 200 in 110ms (compile: 11ms, render: 100ms)
+ GET / 200 in 5.5s (compile: 4.8s, render: 712ms)
+ GET / 200 in 78ms (compile: 8ms, render: 69ms)
+ GET / 200 in 61ms (compile: 5ms, render: 56ms)
+ GET / 200 in 72ms (compile: 5ms, render: 66ms)
+ GET / 200 in 69ms (compile: 8ms, render: 60ms)

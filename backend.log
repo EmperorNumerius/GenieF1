@@ -1,11 +1,44 @@
-INFO:     Started server process [3760]
+INFO:     Started server process [6982]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:37378 - "GET /api/telemetry HTTP/1.1" 200 OK
-INFO:     127.0.0.1:33252 - "GET /api/telemetry?driver=Car%201 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:33252 - "POST /api/unlock_dev?session_id=user_12345 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:33252 - "GET /api/telemetry?driver=Car%201 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:33254 - "OPTIONS /api/insights HTTP/1.1" 200 OK
-ERROR:root:Groq API error: Error code: 401 - {'error': {'message': 'Invalid API Key', 'type': 'invalid_request_error', 'code': 'invalid_api_key'}}
-INFO:     127.0.0.1:33252 - "GET /api/insights HTTP/1.1" 200 OK
+04:37:24 - Starting LiveF1 live timing client
+INFO:     127.0.0.1:34856 - "WebSocket /ws/race_data" [accepted]
+INFO:     connection open
+INFO:     connection closed
+04:37:27 - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+04:37:27 - Got the meeting.
+04:37:27 - Selected meeting/session is:
+	session_name : Race
+04:37:27 - The session was received successfully.
+04:37:28 - Fetching drivers.
+04:37:30 - Session results have been loaded and saved to 'session.sessionResults'.
+04:37:30 - Starting grid have been loaded and saved to 'session.startingGrid'.
+04:37:30 - The callback function for the SILVER table 'laps' was set.
+04:37:30 - The callback function for the SILVER table 'carTelemetry' was set.
+04:37:30 - The callback function for the SILVER table 'raceControlMessages' was set.
+04:37:30 - Topics to be loaded : ['SessionStatus', 'TrackStatus', 'RaceControlMessages', 'CarData.z', 'TimingData', 'Position.z', 'TyreStintSeries', 'track_regions']
+04:37:30 - 'SessionStatus' has been fetched and parsed
+04:37:30 - 'TrackStatus' has been fetched and parsed
+04:37:31 - 'RaceControlMessages' has been fetched and parsed
+04:37:35 - 'CarData.z' has been fetched and parsed
+04:37:36 - 'TimingData' has been fetched and parsed
+04:37:41 - 'Position.z' has been fetched and parsed
+INFO:     127.0.0.1:44936 - "GET /api/calendar HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44930 - "WebSocket /ws/race_data" [accepted]
+INFO:     connection open
+04:37:42 - 'TyreStintSeries' has been fetched and parsed
+INFO:     connection closed
+04:37:55 - 'SessionData' has been fetched and parsed
+04:37:55 - Silver tables are being generated.
+04:38:03 - 'PitStopSeries' has been fetched and parsed
+04:38:03 - Failed to generate silver table 'laps': Invalid value for dtype 'str'. Value should be a string or missing value (or array of those).
+04:38:14 - Failed to generate silver table 'carTelemetry': Invalid value for dtype 'str'. Value should be a string or missing value (or array of those).
+04:38:14 - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+04:38:14 - Laps table is not generated yet. Use .generate() to load required data and generate silver tables.
+04:38:14 - Car Telemetry table is not generated yet. Use .generate() to load required data and generate silver tables.
+04:38:15 - 'DriverList' has been fetched and parsed
+04:38:15 - 'WeatherData' has been fetched and parsed

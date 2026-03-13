@@ -129,12 +129,16 @@ export function TrackMap({
           <button
             onClick={() => setZoom((z) => Math.min(z + 0.5, 8))}
             className="w-8 h-8 hover:bg-white/10 rounded-lg text-neutral-300 flex items-center justify-center font-bold text-lg transition-colors"
+            aria-label="Zoom in"
+            title="Zoom in"
           >
             +
           </button>
           <button
             onClick={() => setZoom((z) => Math.max(z - 0.5, 0.4))}
             className="w-8 h-8 hover:bg-white/10 rounded-lg text-neutral-300 flex items-center justify-center font-bold text-lg transition-colors"
+            aria-label="Zoom out"
+            title="Zoom out"
           >
             -
           </button>
@@ -145,6 +149,8 @@ export function TrackMap({
               setIs3D(false);
             }}
             className="w-8 h-8 mt-1 border-t border-white/10 hover:bg-white/10 rounded-b-lg text-neutral-400 flex items-center justify-center font-black text-[9px] transition-colors"
+            aria-label="Reset view"
+            title="Reset view"
           >
             RST
           </button>
@@ -156,6 +162,8 @@ export function TrackMap({
               ? 'bg-red-600 border-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.5)]'
               : 'bg-black/80 border-white/10 text-neutral-400 hover:text-white backdrop-blur-md hover:bg-white/10'
           }`}
+          aria-label="Toggle 3D view"
+          title="Toggle 3D view"
         >
           {is3D ? '2D' : '3D'}
         </button>
