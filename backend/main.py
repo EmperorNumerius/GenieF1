@@ -109,9 +109,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="GenieF1 - Live Race Engineer Dashboard", lifespan=lifespan)
 
+# SECURITY: avoid allow_origins=["*"] with allow_credentials=True which bypasses CORS in Starlette
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -343,6 +347,9 @@ async def stripe_webhook(request: Request):
 
 @app.post("/api/unlock_dev")
 async def unlock_session_dev(session_id: str):
+    # SECURITY: prevent unauthenticated authorization bypass in production
+    if os.getenv("ENVIRONMENT", "development").lower() == "production":
+        raise HTTPException(status_code=403, detail="Development endpoint disabled in production")
     unlocked_sessions.add(session_id)
     return {"status": f"Unlocked session {session_id}"}
 
