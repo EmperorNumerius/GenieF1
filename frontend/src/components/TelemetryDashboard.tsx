@@ -31,7 +31,7 @@ export function TelemetryDashboard({ selected, isUnlocked, insight }: TelemetryD
               ''
             )}&color=fff&bold=true&size=128`}
             className="w-full h-full object-cover"
-            alt="Driver"
+            alt={`Driver ${selected.name || selected.id}`}
           />
         </div>
         <div className="flex-1 min-w-0">
@@ -41,7 +41,7 @@ export function TelemetryDashboard({ selected, isUnlocked, insight }: TelemetryD
               <img
                 src={`https://ui-avatars.com/api/?name=${selected.team}&background=111&color=fff&size=24`}
                 className="w-3 h-3 rounded-full"
-                alt="Team"
+                alt={`Team ${selected.team}`}
               />
               {selected.team}
             </p>
