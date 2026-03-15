@@ -1,0 +1,3 @@
+## 2024-03-15 - Fast API Event Loop Blocking by Synchronous Clients
+**Learning:** Using synchronous network clients (like `Groq`) inside `async def` endpoints in FastAPI blocks the main event loop. This stalling prevents concurrent tasks, such as background polling and live WebSocket streams, from executing smoothly.
+**Action:** Always use asynchronous clients (e.g., `AsyncGroq`) in these contexts to ensure the main event loop is never blocked by I/O-bound network requests.
