@@ -1,0 +1,4 @@
+## 2024-05-09 - Authorization Bypass in Development Endpoint
+**Vulnerability:** The `/api/unlock_dev` endpoint, designed for local testing, lacked any access controls and was fully accessible in production. This allowed any user to freely bypass the Stripe paywall.
+**Learning:** Development endpoints should never exist in the codebase without explicit guards against running in production. Assuming they won't be discovered is dangerous.
+**Prevention:** Always wrap development/debug endpoints with environment checks (e.g., `os.getenv("ENVIRONMENT") != "production"`) or remove them entirely in production builds using feature flags.
