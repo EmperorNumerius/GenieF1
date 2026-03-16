@@ -127,31 +127,35 @@ export function TrackMap({
       <div className="absolute left-4 bottom-14 flex flex-col gap-2 z-20">
         <div className="flex flex-col gap-1 bg-black/80 p-1 rounded-xl border border-white/10 backdrop-blur-md shadow-2xl">
           <button
+            aria-label="Zoom in"
             onClick={() => setZoom((z) => Math.min(z + 0.5, 8))}
-            className="w-8 h-8 hover:bg-white/10 rounded-lg text-neutral-300 flex items-center justify-center font-bold text-lg transition-colors"
+            className="w-8 h-8 hover:bg-white/10 rounded-lg text-neutral-300 flex items-center justify-center font-bold text-lg transition-colors focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none"
           >
             +
           </button>
           <button
+            aria-label="Zoom out"
             onClick={() => setZoom((z) => Math.max(z - 0.5, 0.4))}
-            className="w-8 h-8 hover:bg-white/10 rounded-lg text-neutral-300 flex items-center justify-center font-bold text-lg transition-colors"
+            className="w-8 h-8 hover:bg-white/10 rounded-lg text-neutral-300 flex items-center justify-center font-bold text-lg transition-colors focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none"
           >
             -
           </button>
           <button
+            aria-label="Reset zoom and pan"
             onClick={() => {
               setZoom(1);
               setPan({ x: 0, y: 0 });
               setIs3D(false);
             }}
-            className="w-8 h-8 mt-1 border-t border-white/10 hover:bg-white/10 rounded-b-lg text-neutral-400 flex items-center justify-center font-black text-[9px] transition-colors"
+            className="w-8 h-8 mt-1 border-t border-white/10 hover:bg-white/10 rounded-b-lg text-neutral-400 flex items-center justify-center font-black text-[9px] transition-colors focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none"
           >
             RST
           </button>
         </div>
         <button
+          aria-label={is3D ? "Switch to 2D view" : "Switch to 3D view"}
           onClick={() => setIs3D(!is3D)}
-          className={`mt-2 w-10 h-10 rounded-xl font-black text-[10px] tracking-wider border shadow-2xl transition-all duration-300 ${
+          className={`mt-2 w-10 h-10 rounded-xl font-black text-[10px] tracking-wider border shadow-2xl transition-all duration-300 focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none ${
             is3D
               ? 'bg-red-600 border-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.5)]'
               : 'bg-black/80 border-white/10 text-neutral-400 hover:text-white backdrop-blur-md hover:bg-white/10'

@@ -75,7 +75,7 @@ export function Header({
 
         <button
           onClick={() => setShowCalendar(!showCalendar)}
-          className="flex items-center gap-1.5 text-[10px] font-bold text-neutral-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-2.5 py-1 rounded-lg transition-all"
+          className="flex items-center gap-1.5 text-[10px] font-bold text-neutral-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 px-2.5 py-1 rounded-lg transition-all focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none"
         >
           <Calendar className="w-3 h-3" /> CALENDAR
         </button>
@@ -92,7 +92,7 @@ export function Header({
         {!isUnlocked ? (
           <button
             onClick={handleDevUnlock}
-            className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 border border-red-400/50 shadow-[0_0_15px_rgba(220,38,38,0.4)] transition-all transform hover:scale-105 active:scale-95"
+            className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 border border-red-400/50 shadow-[0_0_15px_rgba(220,38,38,0.4)] transition-all transform hover:scale-105 active:scale-95 focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none"
           >
             <Lock className="w-3 h-3" /> PREMIUM
           </button>
