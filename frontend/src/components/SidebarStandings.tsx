@@ -102,7 +102,7 @@ export function SidebarStandings({
                       </span>
                       {car.drs > 10 && (
                         <span className="text-[8px] px-1 py-[1px] rounded bg-green-500 text-black font-black tracking-wider shadow-[0_0_8px_rgba(34,197,94,0.6)]">
-                          DRS
+                          OVR
                         </span>
                       )}
                     </div>
