@@ -290,12 +290,14 @@ export default function Home() {
                 <button
                   onClick={handlePitProjection}
                   disabled={isProjecting}
-                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5"
+                  aria-busy={isProjecting}
+                  aria-label={isProjecting ? "Simulating pit stop..." : `Simulate pit stop for car number ${selectedDriver}`}
+                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isProjecting ? (
-                    <Clock className="w-3.5 h-3.5 animate-spin" />
+                    <Clock className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
                   ) : (
-                    <ChevronRight className="w-3.5 h-3.5 text-red-400" />
+                    <ChevronRight className="w-3.5 h-3.5 text-red-400" aria-hidden="true" />
                   )}
                   {isProjecting ? 'SIMULATING...' : `BOX #${selectedDriver}`}
                 </button>
