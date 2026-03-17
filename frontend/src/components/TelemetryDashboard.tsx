@@ -170,7 +170,7 @@ export function TelemetryDashboard({ selected, isUnlocked, insight }: TelemetryD
           </div>
         </div>
 
-        {/* Tires & DRS */}
+        {/* Tires & OVR */}
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner relative overflow-hidden flex flex-col justify-center">
             <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-white/10 to-transparent blur-2xl transform rotate-45" />
@@ -206,7 +206,7 @@ export function TelemetryDashboard({ selected, isUnlocked, insight }: TelemetryD
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,197,94,0.4)_0%,transparent_100%)] animate-pulse" />
             )}
             <p className="text-[9px] font-black uppercase tracking-[0.3em] text-neutral-400 mb-1 z-10 group-hover:text-white transition-colors">
-              DRS Status
+              OVERRIDE STATUS
             </p>
             <p
               className={`font-mono text-xl font-black tracking-widest z-10 ${
