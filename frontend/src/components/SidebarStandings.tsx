@@ -92,31 +92,51 @@ export function SidebarStandings({
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between mt-1">
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className="text-[9px] font-mono text-white font-black px-1 rounded shadow-sm"
-                        style={{ background: tireColor }}
-                      >
-                        {car.tire?.charAt(0) || '?'} L{car.tire_age || 0}
-                      </span>
-                      {car.drs > 10 && (
-                        <span className="text-[8px] px-1 py-[1px] rounded bg-green-500 text-black font-black tracking-wider shadow-[0_0_8px_rgba(34,197,94,0.6)]">
-                          OVR
+                  <div className="flex flex-col gap-1.5 mt-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="text-[9px] font-mono text-white font-black px-1 rounded shadow-sm"
+                          style={{ background: tireColor }}
+                        >
+                          {car.tire?.charAt(0) || '?'} L{car.tire_age || 0}
                         </span>
-                      )}
+                        {car.drs > 10 && (
+                          <span className="text-[8px] px-1 py-[1px] rounded bg-green-500 text-black font-black tracking-wider shadow-[0_0_8px_rgba(34,197,94,0.6)]">
+                            OVR
+                          </span>
+                        )}
+                        <span className="text-[9px] font-mono font-bold text-neutral-400 ml-1">
+                          ⏱ {car.last_lap_time || '--:--.---'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-0.5 text-[9px] font-mono font-black">
+                        {car.pos_diff !== undefined ? (
+                          car.pos_diff > 0 ? (
+                            <span className="text-green-400">▲{Math.abs(car.pos_diff)}</span>
+                          ) : car.pos_diff < 0 ? (
+                            <span className="text-red-400">▼{Math.abs(car.pos_diff)}</span>
+                          ) : (
+                            <span className="text-neutral-700">-</span>
+                          )
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-0.5 text-[9px] font-mono font-black">
-                      {car.pos_diff !== undefined ? (
-                        car.pos_diff > 0 ? (
-                          <span className="text-green-400">▲{Math.abs(car.pos_diff)}</span>
-                        ) : car.pos_diff < 0 ? (
-                          <span className="text-red-400">▼{Math.abs(car.pos_diff)}</span>
-                        ) : (
-                          <span className="text-neutral-700">-</span>
-                        )
-                      ) : null}
-                    </div>
+                    
+                    {/* Minisectors row */}
+                    {(car.sector_1 || car.sector_2 || car.sector_3) && (
+                      <div className="flex items-center gap-[2px] text-[8px] font-mono bg-black/20 rounded p-[2px] border border-white/5">
+                        <div className={`flex-1 flex justify-between px-1 rounded-sm ${car.sector_1 ? 'bg-white/5 text-neutral-300' : 'text-neutral-600'}`}>
+                          <span>S1</span><span>{car.sector_1 || '--'}</span>
+                        </div>
+                        <div className={`flex-1 flex justify-between px-1 rounded-sm ${car.sector_2 ? 'bg-white/5 text-neutral-300' : 'text-neutral-600'}`}>
+                          <span>S2</span><span>{car.sector_2 || '--'}</span>
+                        </div>
+                        <div className={`flex-1 flex justify-between px-1 rounded-sm ${car.sector_3 ? 'bg-white/5 text-neutral-300' : 'text-neutral-600'}`}>
+                          <span>S3</span><span>{car.sector_3 || '--'}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </motion.div>

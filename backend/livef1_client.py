@@ -572,12 +572,11 @@ def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
 
     logger.info("Loading most recent historical session...")
 
-    # Try 2026 Australian GP first, then fall back through recent years
+    # Prioritize Chinese Grand Prix, then fall back through recent years
     session = None
     meeting_name = ""
     _SESSION_SEARCH = [
-        (2026, 1279, "Race"),       # 2026 Australian GP
-        (2026, 1279, "Qualifying"),
+        (2024, 1233, "Race"),       # 2024 Chinese Grand Prix
         (2024, None, "Race"),       # Fallback: last race of 2024
         (2023, None, "Race"),
     ]

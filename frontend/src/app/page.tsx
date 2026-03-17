@@ -110,12 +110,78 @@ export default function Home() {
   /* ─── Loading State ─── */
   if (!raceState || !connected) {
     return (
-      <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-white font-[Outfit,sans-serif]">
-        <div className="text-center">
-          <div className="w-16 h-16 border-2 border-red-600 border-t-transparent rounded-full animate-spin mx-auto mb-6" />
-          <p className="text-sm tracking-[0.3em] uppercase text-neutral-400 font-bold">Connecting to F1 Live Timing...</p>
-          <p className="text-xs text-neutral-600 mt-2">Establishing SignalR telemetry stream</p>
-        </div>
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center text-white font-[Outfit,sans-serif] overflow-hidden relative">
+        {/* Background glow */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-red-600/10 blur-[120px] rounded-full pointer-events-none" />
+        
+        <motion.div 
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+          className="relative z-10 flex flex-col items-center"
+        >
+          {/* F1 style Start Lights */}
+          <div className="flex gap-4 mb-12 bg-neutral-900 p-5 rounded-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="flex flex-col gap-3">
+                <div className="w-10 h-10 rounded-full bg-black border border-white/5 shadow-inner flex items-center justify-center relative overflow-hidden">
+                  <motion.div 
+                    initial={{ opacity: 0.05 }}
+                    animate={{ opacity: [0.05, 1, 1, 0.05] }}
+                    transition={{ 
+                      duration: 2.5, 
+                      repeat: Infinity, 
+                      delay: i * 0.3,
+                      times: [0, 0.1, 0.8, 0.85]
+                    }}
+                    className="absolute inset-0 bg-red-600 shadow-[0_0_30px_#ef4444]"
+                  />
+                </div>
+                <div className="w-10 h-10 rounded-full bg-black border border-white/5 shadow-inner flex items-center justify-center relative overflow-hidden">
+                   <motion.div 
+                    initial={{ opacity: 0.05 }}
+                    animate={{ opacity: [0.05, 1, 1, 0.05] }}
+                    transition={{ 
+                      duration: 2.5, 
+                      repeat: Infinity, 
+                      delay: i * 0.3,
+                      times: [0, 0.1, 0.8, 0.85]
+                    }}
+                    className="absolute inset-0 bg-red-600 shadow-[0_0_30px_#ef4444]"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <motion.h1 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+            className="text-5xl font-black italic tracking-tighter mb-6 text-transparent bg-clip-text bg-gradient-to-r from-white to-neutral-400"
+          >
+            GenieF1 <span className="text-red-600">Pro</span>
+          </motion.h1>
+          
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.8 }}
+            className="flex items-center gap-3 bg-red-600/10 px-6 py-3 rounded-full border border-red-500/20 backdrop-blur-sm"
+          >
+            <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-[pulse_1s_ease-in-out_infinite] shadow-[0_0_12px_#ef4444]" />
+            <p className="text-sm tracking-[0.4em] font-bold text-red-500 text-shadow-sm">CONNECTING TO GRID</p>
+          </motion.div>
+          
+          <motion.p 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.6 }}
+            transition={{ delay: 1.2 }}
+            className="text-xs font-mono mt-6 tracking-widest uppercase"
+          >
+            Establishing Live Telemetry Link...
+          </motion.p>
+        </motion.div>
       </div>
     );
   }
