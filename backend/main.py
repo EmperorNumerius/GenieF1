@@ -23,6 +23,9 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "dummy_groq_key")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+# Parse ALLOWED_ORIGINS from environment, defaulting to local frontend
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+
 logger = logging.getLogger(__name__)
 
 # In-memory
@@ -111,7 +114,7 @@ app = FastAPI(title="GenieF1 - Live Race Engineer Dashboard", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
