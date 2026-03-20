@@ -343,6 +343,10 @@ async def stripe_webhook(request: Request):
 
 @app.post("/api/unlock_dev")
 async def unlock_session_dev(session_id: str):
+    # Security: Ensure this endpoint is only accessible in non-production environments
+    # to prevent unauthorized access and bypassing the paywall in live deployments.
+    if os.getenv("ENVIRONMENT") == "production":
+        raise HTTPException(status_code=403, detail="Not authorized in production.")
     unlocked_sessions.add(session_id)
     return {"status": f"Unlocked session {session_id}"}
 
