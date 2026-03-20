@@ -52,12 +52,22 @@ export function SidebarStandings({
               <motion.div
                 layout
                 key={car.number}
+                role="button"
+                tabIndex={0}
+                aria-pressed={isSelected}
+                aria-label={`Select driver ${car.id}, position ${car.pos || '-'}`}
                 onClick={() => setSelectedDriver(car.number)}
+                onKeyDown={(e: React.KeyboardEvent) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setSelectedDriver(car.number);
+                  }
+                }}
                 onContextMenu={(e: React.MouseEvent) => {
                   e.preventDefault();
                   setContextMenu({ x: e.pageX, y: e.pageY, driverId: car.number });
                 }}
-                className={`flex items-center gap-3 px-3 py-2 cursor-pointer border-l-[3px] border-b border-b-white/5 transition-all duration-300 ${
+                className={`flex items-center gap-3 px-3 py-2 cursor-pointer border-l-[3px] border-b border-b-white/5 transition-all duration-300 focus-visible:outline-none focus-visible:bg-white/5 focus-visible:ring-1 focus-visible:ring-white/50 ${
                   isSelected
                     ? 'bg-gradient-to-r from-white/10 to-transparent border-l-current shadow-inner'
                     : 'hover:bg-white/5 border-l-transparent'
