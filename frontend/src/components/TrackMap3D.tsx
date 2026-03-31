@@ -1,8 +1,8 @@
 import React, { useMemo, useEffect, useRef, useState } from 'react';
 import Map, { Source, Layer, MapRef } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { motion } from 'framer-motion';
-import { Camera, Navigation, Map as MapIcon, Maximize } from 'lucide-react';
+import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
+import { Navigation, Map as MapIcon, Maximize } from 'lucide-react';
 
 interface TrackMap3DProps {
   trackOutline: number[][];
@@ -12,6 +12,20 @@ interface TrackMap3DProps {
   onSelectDriver: (n: number) => void;
   circuitName?: string;
 }
+
+type TrailProperties = {
+  driver_no: string;
+  color: string;
+  width: number;
+  opacity: number;
+};
+
+type CarProperties = {
+  id: string;
+  number: number;
+  color: string;
+  selected: boolean;
+};
 
 // A dictionary of approximate track origins to project F1 telemetry onto actual world coordinates.
 const TRACK_ORIGINS: Record<string, { lat: number; lng: number; rot: number; scale: number; flip: boolean }> = {
@@ -51,12 +65,13 @@ export default function TrackMap3D({
   }, [circuitName]);
 
   // Provide the Base Line geojson from telemetry
-  const outlineGeojson = useMemo(() => {
+  const outlineGeojson = useMemo<FeatureCollection<LineString> | null>(() => {
     if (!trackOutline?.length) return null;
     return {
       type: 'FeatureCollection',
       features: [{
         type: 'Feature',
+        properties: {},
         geometry: {
           type: 'LineString',
           coordinates: trackOutline.map(pt => f1ToLngLat(pt[0], pt[1], meta))
@@ -66,8 +81,8 @@ export default function TrackMap3D({
   }, [trackOutline, meta]);
 
   // Provide Trails Geojson
-  const trailsGeojson = useMemo(() => {
-    const features: any[] = [];
+  const trailsGeojson = useMemo<FeatureCollection<LineString, TrailProperties>>(() => {
+    const features: Array<Feature<LineString, TrailProperties>> = [];
     for (const [dn, trail] of Object.entries(positionTrails)) {
       if (trail && trail.length > 1) {
         const c = cars.find(car => car.number.toString() === dn);
@@ -91,15 +106,15 @@ export default function TrackMap3D({
   }, [positionTrails, selectedDriver, cars, meta]);
 
   // Provide Current Car Markers Geojson
-  const carsGeojson = useMemo(() => {
-    const features: any[] = [];
+  const carsGeojson = useMemo<FeatureCollection<Point, CarProperties>>(() => {
+    const features: Array<Feature<Point, CarProperties>> = [];
     for (const car of cars) {
-      if (!car.location?.x && !car.location?.y) continue;
+      if (car.location?.x == null || car.location?.y == null) continue;
       const isSelected = selectedDriver === car.number;
       features.push({
         type: 'Feature',
         properties: {
-          id: car.id,
+          id: String(car.id ?? car.number),
           number: car.number,
           color: car.color || '#fff',
           selected: isSelected
@@ -129,7 +144,7 @@ export default function TrackMap3D({
   useEffect(() => {
     if (viewAngle === 'chase' && selectedDriver && mapRef.current) {
       const car = cars.find(c => c.number === selectedDriver);
-      if (car?.location?.x && car?.location?.y) {
+      if (car?.location?.x != null && car?.location?.y != null) {
         const [lng, lat] = f1ToLngLat(car.location.x, car.location.y, meta);
         mapRef.current.flyTo({
           center: [lng, lat],
@@ -169,7 +184,8 @@ export default function TrackMap3D({
         onClick={(e: any) => {
            const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['car-markers-layer'] });
            if (features && features.length > 0) {
-             onSelectDriver(features[0].properties.number);
+             const selectedNumber = Number(features[0].properties?.number);
+             if (Number.isFinite(selectedNumber)) onSelectDriver(selectedNumber);
            }
         }}
       >
