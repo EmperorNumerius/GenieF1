@@ -536,7 +536,7 @@ def get_meetings_for_year(year: int) -> List[Dict[str, Any]]:
                 "meeting_name": getattr(meeting, "name", ""),
                 "meeting_official_name": getattr(meeting, "officialname", ""),
                 "country_name": getattr(meeting, "country", {}).get("Name", "") if isinstance(getattr(meeting, "country", None), dict) else str(getattr(meeting, "country", "")),
-                "circuit_short_name": getattr(meeting, "circuit", {}).get("ShortName", "") if isinstance(getattr(meeting, "circuit", None), dict) else str(getattr(meeting, "circuit", "")),
+                "circuit_short_name": getattr(getattr(meeting, "circuit", None), "short_name", None) or (getattr(meeting, "circuit", {}).get("ShortName", "") if isinstance(getattr(meeting, "circuit", None), dict) else getattr(meeting, "location", "")),
                 "location": getattr(meeting, "location", ""),
                 "year": year,
             })
@@ -573,47 +573,44 @@ def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
     logger.info("Loading most recent historical session...")
 
     # Prioritize Chinese Grand Prix, then fall back through recent years
+    # Try current year, then previous years
     session = None
     meeting_name = ""
-    _SESSION_SEARCH = [
-        (2024, 1233, "Race"),       # 2024 Chinese Grand Prix
-        (2024, None, "Race"),       # Fallback: last race of 2024
-        (2023, None, "Race"),
-    ]
+    current_year = dt.datetime.now().year
+    years_to_check = [current_year, current_year - 1, 2024]
 
-    for year, meeting_key_override, session_type in _SESSION_SEARCH:
+    for year in years_to_check:
+        if session:
+            break
+            
         try:
             season = livef1.get_season(year)
             if not season.meetings:
                 continue
-
-            if meeting_key_override:
-                # Find the specific meeting by key
-                target = None
-                for m in season.meetings:
-                    if m.key == meeting_key_override:
-                        target = m
-                        break
-                if not target:
-                    continue
-                meeting_name = getattr(target, "name", "")
-                mk = target.key
-            else:
-                # Fall back to last meeting in season
-                target = season.meetings[-1]
+                
+            # Iterate meetings backwards to find the most recent completed one
+            for target in reversed(season.meetings):
+                if session:
+                    break
+                    
                 meeting_name = getattr(target, "name", "")
                 mk = target.key
 
-            session = livef1.get_session(
-                season=year,
-                meeting_key=mk,
-                session_identifier=session_type,
-            )
-            if session:
-                logger.info("Loaded historical session: %s %s %d", meeting_name, session_type, year)
-                break
+                # Try finding Race, Sprint, Sprint Shootout, Qualifying in that order
+                for session_type in ["Race", "Sprint", "Sprint Shootout", "Qualifying"]:
+                    try:
+                        session = livef1.get_session(
+                            season=year,
+                            meeting_key=mk,
+                            session_identifier=session_type,
+                        )
+                        if session:
+                            logger.info("Loaded historical session: %s %s %d", meeting_name, session_type, year)
+                            break
+                    except Exception:
+                        continue
         except Exception as exc:
-            logger.warning("Failed to load %d/%s/%s: %s", year, meeting_key_override, session_type, exc)
+            logger.warning("Failed to check year %d: %s", year, exc)
             continue
 
     if not session:
@@ -804,6 +801,8 @@ def load_latest_historical_session(data_store: LiveF1DataStore) -> bool:
         circuit_raw = getattr(meeting_obj, "circuit", None)
         if isinstance(circuit_raw, dict):
             circuit_info = circuit_raw
+        elif circuit_raw is not None:
+            circuit_info = {"ShortName": getattr(circuit_raw, "short_name", "")}
         country_raw = getattr(meeting_obj, "country", None)
         if isinstance(country_raw, dict):
             country_info = country_raw

@@ -130,3 +130,30 @@
 2026-03-09 18:46:28 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
 2026-03-09 18:46:29 - livef1 - INFO - 'DriverList' has been fetched and parsed
 2026-03-09 18:46:30 - livef1 - INFO - 'WeatherData' has been fetched and parsed
+2026-03-29 00:31:47 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 HEINEKEN CHINESE GRAND PRIX 2026
+	Meeting Name : Chinese Grand Prix
+	Meeting Circuit Shortname : Shanghai
+2026-03-29 00:31:47 - livef1 - INFO - Got the meeting.
+2026-03-29 00:31:47 - livef1 - INFO - Selected meeting/session is:
+	session_name : Race
+2026-03-29 00:31:47 - livef1 - INFO - The session was received successfully.
+2026-03-29 00:31:48 - livef1 - INFO - Fetching drivers.
+2026-03-29 00:36:24 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 HEINEKEN CHINESE GRAND PRIX 2026
+	Meeting Name : Chinese Grand Prix
+	Meeting Circuit Shortname : Shanghai
+2026-03-29 00:36:24 - livef1 - INFO - Got the meeting.
+2026-03-29 00:36:24 - livef1 - INFO - Selected meeting/session is:
+	session_name : Race
+2026-03-29 00:36:24 - livef1 - INFO - The session was received successfully.
+2026-03-29 00:36:25 - livef1 - INFO - Fetching drivers.
+2026-03-29 00:47:58 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 HEINEKEN CHINESE GRAND PRIX 2026
+	Meeting Name : Chinese Grand Prix
+	Meeting Circuit Shortname : Shanghai
+2026-03-29 00:47:58 - livef1 - INFO - Got the meeting.
+2026-03-29 00:47:58 - livef1 - INFO - Selected meeting/session is:
+	session_name : Race
+2026-03-29 00:47:58 - livef1 - INFO - The session was received successfully.
+2026-03-29 00:47:59 - livef1 - INFO - Fetching drivers.
