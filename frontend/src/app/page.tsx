@@ -335,6 +335,7 @@ export default function Home() {
                   positionTrails={raceState.position_trails || {}}
                   selectedDriver={selectedDriver}
                   onSelectDriver={setSelectedDriver}
+                  circuitName={sess?.circuit}
                 />
               )}
             </div>
