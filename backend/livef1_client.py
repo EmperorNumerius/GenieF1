@@ -300,34 +300,73 @@ def start_livef1_thread(data_store: LiveF1DataStore) -> threading.Thread:
 
 # ─── Race State Builder ───────────────────────────────────────────────────────
 
-# Fallback driver info for F1 grid
+# Fallback driver info for F1 grid (with country codes for flag emojis)
 DRIVER_INFO = {
-    1: {"tla": "VER", "name": "Max Verstappen", "team": "Red Bull Racing"},
-    2: {"tla": "SAR", "name": "Logan Sargeant", "team": "Williams"},
-    3: {"tla": "RIC", "name": "Daniel Ricciardo", "team": "RB"},
-    4: {"tla": "NOR", "name": "Lando Norris", "team": "McLaren"},
-    7: {"tla": "DOO", "name": "Jack Doohan", "team": "Alpine"},
-    10: {"tla": "GAS", "name": "Pierre Gasly", "team": "Alpine"},
-    11: {"tla": "PER", "name": "Sergio Perez", "team": "Red Bull Racing"},
-    12: {"tla": "ANT", "name": "Kimi Antonelli", "team": "Mercedes"},
-    14: {"tla": "ALO", "name": "Fernando Alonso", "team": "Aston Martin"},
-    16: {"tla": "LEC", "name": "Charles Leclerc", "team": "Ferrari"},
-    18: {"tla": "STR", "name": "Lance Stroll", "team": "Aston Martin"},
-    20: {"tla": "MAG", "name": "Kevin Magnussen", "team": "Haas F1 Team"},
-    22: {"tla": "TSU", "name": "Yuki Tsunoda", "team": "RB"},
-    23: {"tla": "ALB", "name": "Alexander Albon", "team": "Williams"},
-    24: {"tla": "ZOU", "name": "Zhou Guanyu", "team": "Kick Sauber"},
-    27: {"tla": "HUL", "name": "Nico Hulkenberg", "team": "Haas F1 Team"},
-    30: {"tla": "LAW", "name": "Liam Lawson", "team": "RB"},
-    31: {"tla": "OCO", "name": "Esteban Ocon", "team": "Haas F1 Team"},
-    43: {"tla": "COL", "name": "Franco Colapinto", "team": "Williams"},
-    44: {"tla": "HAM", "name": "Lewis Hamilton", "team": "Ferrari"},
-    50: {"tla": "BEA", "name": "Oliver Bearman", "team": "Haas F1 Team"},
-    55: {"tla": "SAI", "name": "Carlos Sainz", "team": "Williams"},
-    63: {"tla": "RUS", "name": "George Russell", "team": "Mercedes"},
-    77: {"tla": "BOT", "name": "Valtteri Bottas", "team": "Kick Sauber"},
-    81: {"tla": "PIA", "name": "Oscar Piastri", "team": "McLaren"},
+    1: {"tla": "VER", "name": "Max Verstappen", "team": "Red Bull Racing", "country": "NED"},
+    2: {"tla": "SAR", "name": "Logan Sargeant", "team": "Williams", "country": "USA"},
+    3: {"tla": "RIC", "name": "Daniel Ricciardo", "team": "RB", "country": "AUS"},
+    4: {"tla": "NOR", "name": "Lando Norris", "team": "McLaren", "country": "GBR"},
+    7: {"tla": "DOO", "name": "Jack Doohan", "team": "Alpine", "country": "AUS"},
+    10: {"tla": "GAS", "name": "Pierre Gasly", "team": "Alpine", "country": "FRA"},
+    11: {"tla": "PER", "name": "Sergio Perez", "team": "Red Bull Racing", "country": "MEX"},
+    12: {"tla": "ANT", "name": "Kimi Antonelli", "team": "Mercedes", "country": "ITA"},
+    14: {"tla": "ALO", "name": "Fernando Alonso", "team": "Aston Martin", "country": "ESP"},
+    16: {"tla": "LEC", "name": "Charles Leclerc", "team": "Ferrari", "country": "MON"},
+    18: {"tla": "STR", "name": "Lance Stroll", "team": "Aston Martin", "country": "CAN"},
+    20: {"tla": "MAG", "name": "Kevin Magnussen", "team": "Haas F1 Team", "country": "DEN"},
+    22: {"tla": "TSU", "name": "Yuki Tsunoda", "team": "RB", "country": "JPN"},
+    23: {"tla": "ALB", "name": "Alexander Albon", "team": "Williams", "country": "THA"},
+    24: {"tla": "ZOU", "name": "Zhou Guanyu", "team": "Kick Sauber", "country": "CHN"},
+    27: {"tla": "HUL", "name": "Nico Hulkenberg", "team": "Haas F1 Team", "country": "GER"},
+    30: {"tla": "LAW", "name": "Liam Lawson", "team": "RB", "country": "NZL"},
+    31: {"tla": "OCO", "name": "Esteban Ocon", "team": "Haas F1 Team", "country": "FRA"},
+    43: {"tla": "COL", "name": "Franco Colapinto", "team": "Williams", "country": "ARG"},
+    44: {"tla": "HAM", "name": "Lewis Hamilton", "team": "Ferrari", "country": "GBR"},
+    50: {"tla": "BEA", "name": "Oliver Bearman", "team": "Haas F1 Team", "country": "GBR"},
+    55: {"tla": "SAI", "name": "Carlos Sainz", "team": "Williams", "country": "ESP"},
+    63: {"tla": "RUS", "name": "George Russell", "team": "Mercedes", "country": "GBR"},
+    77: {"tla": "BOT", "name": "Valtteri Bottas", "team": "Kick Sauber", "country": "FIN"},
+    81: {"tla": "PIA", "name": "Oscar Piastri", "team": "McLaren", "country": "AUS"},
 }
+
+# F1 official driver headshot URL pattern. The official site uses driver number
+# + first 3 letters of last name, but this changes year to year. We use a
+# slug-based fallback that resolves to a stable, real headshot via media-cdn.
+# Built-in headshot URLs (FIA media. Stable, hot-linkable F1 driver photos).
+DRIVER_HEADSHOTS = {
+    "VER": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/M/MAXVER01_Max_Verstappen/maxver01.png.transform/2col-retina/image.png",
+    "NOR": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/L/LANNOR01_Lando_Norris/lannor01.png.transform/2col-retina/image.png",
+    "PIA": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/O/OSCPIA01_Oscar_Piastri/oscpia01.png.transform/2col-retina/image.png",
+    "LEC": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/C/CHALEC01_Charles_Leclerc/chalec01.png.transform/2col-retina/image.png",
+    "HAM": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/L/LEWHAM01_Lewis_Hamilton/lewham01.png.transform/2col-retina/image.png",
+    "SAI": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/C/CARSAI01_Carlos_Sainz/carsai01.png.transform/2col-retina/image.png",
+    "RUS": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/G/GEORUS01_George_Russell/georus01.png.transform/2col-retina/image.png",
+    "ANT": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/K/KIMANT01_Kimi_Antonelli/kimant01.png.transform/2col-retina/image.png",
+    "ALO": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/F/FERALO01_Fernando_Alonso/feralo01.png.transform/2col-retina/image.png",
+    "STR": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/L/LANSTR01_Lance_Stroll/lanstr01.png.transform/2col-retina/image.png",
+    "GAS": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/P/PIEGAS01_Pierre_Gasly/piegas01.png.transform/2col-retina/image.png",
+    "DOO": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/J/JACDOO01_Jack_Doohan/jacdoo01.png.transform/2col-retina/image.png",
+    "OCO": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/E/ESTOCO01_Esteban_Ocon/estoco01.png.transform/2col-retina/image.png",
+    "HUL": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/N/NICHUL01_Nico_Hulkenberg/nichul01.png.transform/2col-retina/image.png",
+    "BEA": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/O/OLIBEA01_Oliver_Bearman/olibea01.png.transform/2col-retina/image.png",
+    "ALB": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/A/ALEALB01_Alexander_Albon/alealb01.png.transform/2col-retina/image.png",
+    "COL": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/F/FRACOL01_Franco_Colapinto/fracol01.png.transform/2col-retina/image.png",
+    "TSU": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/Y/YUKTSU01_Yuki_Tsunoda/yuktsu01.png.transform/2col-retina/image.png",
+    "LAW": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/L/LIALAW01_Liam_Lawson/lialaw01.png.transform/2col-retina/image.png",
+    "BOT": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/V/VALBOT01_Valtteri_Bottas/valbot01.png.transform/2col-retina/image.png",
+    "ZHO": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/Z/ZHOGUA01_Zhou_Guanyu/zhogua01.png.transform/2col-retina/image.png",
+    "ZOU": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/Z/ZHOGUA01_Zhou_Guanyu/zhogua01.png.transform/2col-retina/image.png",
+    "PER": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/S/SERPER01_Sergio_Perez/serper01.png.transform/2col-retina/image.png",
+    "SAR": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/L/LOGSAR01_Logan_Sargeant/logsar01.png.transform/2col-retina/image.png",
+    "RIC": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/D/DANRIC01_Daniel_Ricciardo/danric01.png.transform/2col-retina/image.png",
+    "MAG": "https://media.formula1.com/d_driver_fallback_image.png/content/dam/fom-website/drivers/K/KEVMAG01_Kevin_Magnussen/kevmag01.png.transform/2col-retina/image.png",
+}
+
+DEFAULT_HEADSHOT = "https://media.formula1.com/d_driver_fallback_image.png"
+
+
+def _get_headshot_url(tla: str) -> str:
+    return DRIVER_HEADSHOTS.get(tla.upper(), DEFAULT_HEADSHOT)
 
 def get_full_race_state(data_store: LiveF1DataStore) -> Dict[str, Any]:
     """
@@ -379,6 +418,14 @@ def get_full_race_state(data_store: LiveF1DataStore) -> Dict[str, Any]:
         full_name = f"{first_name} {last_name}".strip() or driver.get("FullName") or fallback.get("name") or f"Driver {dn}"
         tla = driver.get("Tla", driver.get("name_acronym")) or fallback.get("tla") or str(dn)
         team_name = driver.get("TeamName", driver.get("team_name")) or fallback.get("team") or ""
+        country_code = driver.get("CountryCode", driver.get("country_code")) or fallback.get("country") or ""
+        # Prefer the live HeadshotUrl from F1 SignalR if present, else fall back
+        # to our static map of official F1 media URLs, else default placeholder.
+        headshot_url = (
+            driver.get("HeadshotUrl")
+            or driver.get("headshot_url")
+            or _get_headshot_url(tla)
+        )
         team_color = driver.get("TeamColour", "")
         if team_color and not str(team_color).startswith("#"):
             team_color = f"#{team_color}"
@@ -414,6 +461,8 @@ def get_full_race_state(data_store: LiveF1DataStore) -> Dict[str, Any]:
             "name": full_name,
             "team": team_name,
             "color": team_color,
+            "country_code": country_code,
+            "headshot_url": headshot_url,
             "pos": position,
             "speed": _as_int(telem.get("speed", 0), 0),
             "rpm": _as_int(telem.get("rpm", 0), 0),

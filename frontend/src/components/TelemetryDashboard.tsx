@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Gauge, Clock, Zap, TrendingUp } from 'lucide-react';
 import { getTeamColor, TIRE_COLORS, formatSectorTime } from '../lib/constants';
+import { countryCodeToFlag, getTeamLogo } from '../lib/drivers';
 
 interface TelemetryDashboardProps {
   selected: any;
@@ -189,21 +190,34 @@ export function TelemetryDashboard({ selected, isUnlocked, insight }: TelemetryD
   return (
     <div className="w-[300px] flex flex-col bg-black/60 backdrop-blur-md rounded-xl border border-white/10 overflow-hidden relative">
       <div className="p-4 border-b border-white/10 bg-gradient-to-r from-white/5 to-transparent flex items-center gap-3 relative z-10">
-        <div className="w-14 h-14 rounded-lg flex items-center justify-center text-lg font-black font-mono border border-white/20 relative overflow-hidden shrink-0">
+        <div
+          className="w-14 h-14 rounded-lg relative overflow-hidden border-2 shrink-0"
+          style={{ borderColor: teamColor, background: `${teamColor}33` }}
+        >
           <img
-            src={`https://ui-avatars.com/api/?name=${selected.id}&background=${teamColor.replace('#', '')}&color=fff&bold=true&size=128`}
-            className="w-full h-full object-cover"
-            alt={`Driver ${selected.name || selected.id}`}
+            src={selected.headshot_url || `https://ui-avatars.com/api/?name=${selected.id}&background=${teamColor.replace('#', '')}&color=fff&bold=true&size=128`}
+            className="w-full h-full object-cover object-top"
+            alt={`${selected.name || selected.id} headshot`}
+            onError={(e) => {
+              const fallback = `https://ui-avatars.com/api/?name=${selected.id}&background=${teamColor.replace('#', '')}&color=fff&bold=true&size=128`;
+              const img = e.currentTarget;
+              if (img.src !== fallback) img.src = fallback;
+            }}
           />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-bold tracking-tight text-white uppercase">{selected.name}</h2>
+            {selected.country_code && (
+              <span className="text-base leading-none" aria-label={`${selected.country_code} flag`}>
+                {countryCodeToFlag(selected.country_code)}
+              </span>
+            )}
+            <h2 className="text-base font-bold tracking-tight text-white uppercase truncate">{selected.name}</h2>
             <DrsPill drs={selected.drs} />
           </div>
           <div className="flex flex-col gap-1 items-start mt-1">
             <p className="text-[10px] font-black uppercase text-neutral-400 tracking-wider bg-white/10 px-1.5 py-0.5 rounded border border-white/10 flex items-center gap-1">
-              <img src={`https://ui-avatars.com/api/?name=${selected.team}&background=111&color=fff&size=24`} className="w-3 h-3 rounded-full" alt={`Team ${selected.team}`} />
+              <img src={getTeamLogo(selected.team)} className="w-3 h-3" alt="" aria-hidden />
               {selected.team}
             </p>
           </div>
