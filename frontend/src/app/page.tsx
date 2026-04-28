@@ -12,6 +12,7 @@ import { AIInsightsPanel } from '../components/AIInsightsPanel';
 import { SectorHeatmap } from '../components/SectorHeatmap';
 import { BattleView } from '../components/BattleView';
 import { getTeamColor } from '../lib/constants';
+import { apiUrl, wsUrl } from '../lib/api';
 
 // ─── Types for AI modal results ───────────────────────────────────────────────
 
@@ -82,7 +83,7 @@ export default function Home() {
 
   useEffect(() => {
     const connectWs = () => {
-      const ws = new WebSocket('ws://localhost:8000/ws/race_data');
+      const ws = new WebSocket(wsUrl('/ws/race_data'));
       ws.onopen = () => setConnected(true);
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
@@ -106,7 +107,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/calendar')
+    fetch(apiUrl('/api/calendar'))
       .then((r) => r.json())
       .then((d) => {
         const meetings = d.meetings || [];
@@ -123,7 +124,7 @@ export default function Home() {
     if (!isUnlocked) return;
     const fetchInsight = async () => {
       try {
-        const res = await fetch('http://localhost:8000/api/insights', {
+        const res = await fetch(apiUrl('/api/insights'), {
           headers: { 'session-id': sessionId.current },
         });
         if (res.ok) {
@@ -199,7 +200,7 @@ export default function Home() {
   }, [raceState, selectedDriver, showOvertakeModal, showStrategyModal]);
 
   const handleDevUnlock = useCallback(async () => {
-    await fetch(`http://localhost:8000/api/unlock_dev?session_id=${sessionId.current}`, { method: 'POST' });
+    await fetch(apiUrl(`/api/unlock_dev?session_id=${sessionId.current}`), { method: 'POST' });
     setIsUnlocked(true);
   }, []);
 
@@ -208,7 +209,7 @@ export default function Home() {
     setIsProjecting(true);
     setPitProjection(null);
     try {
-      const res = await fetch(`http://localhost:8000/api/pit_projection?driver_number=${selectedDriver}`, {
+      const res = await fetch(apiUrl(`/api/pit_projection?driver_number=${selectedDriver}`), {
         headers: { 'session-id': sessionId.current },
       });
       if (res.ok) setPitProjection(await res.json());
@@ -250,7 +251,7 @@ export default function Home() {
     setOvertakeLoading(true);
     try {
       const res = await fetch(
-        `http://localhost:8000/api/overtake_simulation?driver_number=${driverId}&target_number=${targetCar.number}`,
+        apiUrl(`/api/overtake_simulation?driver_number=${driverId}&target_number=${targetCar.number}`),
         { headers: { 'session-id': sessionId.current } }
       );
       if (res.ok) {
@@ -283,7 +284,7 @@ export default function Home() {
     setStrategyLoading(true);
     try {
       const res = await fetch(
-        `http://localhost:8000/api/tire_strategy?driver_number=${driverId}&laps_remaining=${lapsRemaining}`,
+        apiUrl(`/api/tire_strategy?driver_number=${driverId}&laps_remaining=${lapsRemaining}`),
         { headers: { 'session-id': sessionId.current } }
       );
       if (res.ok) {

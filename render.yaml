@@ -1,0 +1,38 @@
+# Render.com blueprint for GenieF1 backend.
+#
+# To deploy:
+#   1. Push this repo to GitHub (already done — EmperorNumerius/GenieF1)
+#   2. Go to https://dashboard.render.com/blueprints
+#   3. Click "New Blueprint Instance" and connect this repo
+#   4. Render will read this file and create the service
+#   5. Add environment variables in the dashboard (GROQ_API_KEY, etc.)
+#   6. Once the service is live, attach a custom domain (f1-api.numeri.us)
+#
+# Note: free Render Web Services spin down after 15 min of inactivity. The
+# first request after a spin-down takes ~30s to wake the dyno. For always-on
+# behavior, upgrade to the Starter plan (~$7/mo).
+
+services:
+  - type: web
+    name: genief1-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /api/race_state
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: ALLOWED_ORIGINS
+        value: "https://f1.numeri.us,http://localhost:3000"
+      # The following must be set manually in the Render dashboard
+      # (Render won't generate values for secrets — `sync: false`).
+      - key: GROQ_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: DISCORD_BOT_TOKEN
+        sync: false

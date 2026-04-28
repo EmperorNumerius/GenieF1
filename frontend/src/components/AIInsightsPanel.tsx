@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Brain, MessageSquare, AlertTriangle, TrendingUp, Loader2, Send, Sparkles } from 'lucide-react';
+import { apiUrl } from '../lib/api';
 
 interface Anomaly {
   driver_id: string;
@@ -27,8 +28,6 @@ interface ChatMessage {
   content: string;
   ts: number;
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
 const SEVERITY_COLOR: Record<string, string> = {
   low: 'border-yellow-500/30 bg-yellow-500/5 text-yellow-300',
@@ -80,7 +79,7 @@ export function AIInsightsPanel({ selectedDriver, raceState }: Props) {
     const fetchPredictions = async () => {
       setPredictLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/api/monte_carlo?simulations=500`);
+        const res = await fetch(apiUrl('/api/monte_carlo?simulations=500'));
         if (!res.ok) throw new Error('failed');
         const data = await res.json();
         if (!cancelled) setPredictions(data.predictions || []);
@@ -103,7 +102,7 @@ export function AIInsightsPanel({ selectedDriver, raceState }: Props) {
     let cancelled = false;
     const fetchAnomalies = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/anomalies`);
+        const res = await fetch(apiUrl('/api/anomalies'));
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled) setAnomalies(Array.isArray(data) ? data : data.anomalies || []);
@@ -126,7 +125,7 @@ export function AIInsightsPanel({ selectedDriver, raceState }: Props) {
     setInput('');
     setChatLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/race_engineer`, {
+      const res = await fetch(apiUrl('/api/race_engineer'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
