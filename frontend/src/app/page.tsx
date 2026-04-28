@@ -2,13 +2,48 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, Zap, Clock, MessageSquare, ChevronRight, Activity } from 'lucide-react';
+import { Calendar, Zap, Clock, MessageSquare, ChevronRight, Activity, X, Loader2 } from 'lucide-react';
 import { Header } from '../components/Header';
 import { RaceControlBanner } from '../components/RaceControlBanner';
 import { SidebarStandings } from '../components/SidebarStandings';
 import { TrackMap } from '../components/TrackMap';
 import { TelemetryDashboard } from '../components/TelemetryDashboard';
 import { getTeamColor } from '../lib/constants';
+
+// ─── Types for AI modal results ───────────────────────────────────────────────
+
+interface OvertakeResult {
+  driver: string;
+  driver_pos: number;
+  target: string;
+  target_pos: number;
+  gap_seconds: number;
+  pace_delta_per_lap: number;
+  drs_available: boolean;
+  laps_to_catch: number | null;
+  assessment: string;
+  radio_message: string;
+}
+
+interface TireStrategyResult {
+  driver: string;
+  current_compound: string;
+  tire_age: number;
+  laps_remaining: number;
+  laps_left_on_tire: number;
+  pit_in_laps: number;
+  urgency: string;
+  recommended_compound: string;
+  strategy: string;
+  weather_temp: number;
+  radio_message: string;
+}
+
+type AiModalState =
+  | { kind: 'overtake'; loading: true; result: null; error: null }
+  | { kind: 'overtake'; loading: false; result: OvertakeResult | null; error: string | null }
+  | { kind: 'tire'; loading: true; result: null; error: null }
+  | { kind: 'tire'; loading: false; result: TireStrategyResult | null; error: string | null };
 
 export default function Home() {
   const [raceState, setRaceState] = useState<any>(null);
@@ -24,6 +59,16 @@ export default function Home() {
   const [connected, setConnected] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; driverId: number } | null>(null);
   const [nextSession, setNextSession] = useState<any>(null);
+
+  // ─── AI modal state ───────────────────────────────────────────────────────
+  const [showOvertakeModal, setShowOvertakeModal] = useState(false);
+  const [showStrategyModal, setShowStrategyModal] = useState(false);
+  const [overtakeResult, setOvertakeResult] = useState<OvertakeResult | null>(null);
+  const [strategyResult, setStrategyResult] = useState<TireStrategyResult | null>(null);
+  const [overtakeLoading, setOvertakeLoading] = useState(false);
+  const [strategyLoading, setStrategyLoading] = useState(false);
+  const [overtakeError, setOvertakeError] = useState<string | null>(null);
+  const [strategyError, setStrategyError] = useState<string | null>(null);
 
   // Close context menu on click
   useEffect(() => {
@@ -89,6 +134,67 @@ export default function Home() {
     return () => clearInterval(iv);
   }, [isUnlocked]);
 
+  // ─── Global keyboard navigation ──────────────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip when typing inside an input / textarea / select
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      const cars: any[] = raceState?.cars ?? [];
+      // Sort by position so index 0 = P1
+      const sorted = [...cars].sort((a, b) => (a.pos ?? 99) - (b.pos ?? 99));
+
+      // Esc — close any open modal or deselect driver
+      if (e.key === 'Escape') {
+        if (showOvertakeModal) { setShowOvertakeModal(false); return; }
+        if (showStrategyModal) { setShowStrategyModal(false); return; }
+        setSelectedDriver(null);
+        return;
+      }
+
+      if (!sorted.length) return;
+
+      const currentIndex = selectedDriver
+        ? sorted.findIndex((c: any) => c.number === selectedDriver)
+        : -1;
+
+      // ↑ / k — move to previous driver (lower position number = ahead)
+      if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        const prev = currentIndex <= 0 ? sorted.length - 1 : currentIndex - 1;
+        setSelectedDriver(sorted[prev].number);
+        return;
+      }
+
+      // ↓ / j — move to next driver
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        const next =
+          currentIndex < 0 || currentIndex >= sorted.length - 1 ? 0 : currentIndex + 1;
+        setSelectedDriver(sorted[next].number);
+        return;
+      }
+
+      // 1–9 — jump to that grid position
+      const digit = parseInt(e.key, 10);
+      if (!isNaN(digit) && digit >= 1 && digit <= 9) {
+        const car = sorted[digit - 1];
+        if (car) setSelectedDriver(car.number);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [raceState, selectedDriver, showOvertakeModal, showStrategyModal]);
+
   const handleDevUnlock = useCallback(async () => {
     await fetch(`http://localhost:8000/api/unlock_dev?session_id=${sessionId.current}`, { method: 'POST' });
     setIsUnlocked(true);
@@ -106,6 +212,89 @@ export default function Home() {
     } catch {}
     setIsProjecting(false);
   }, [isUnlocked, selectedDriver]);
+
+  // ─── Overtake simulation ──────────────────────────────────────────────────
+  const handleOvertakeSim = useCallback(async (driverId: number) => {
+    setShowOvertakeModal(true);
+    setOvertakeResult(null);
+    setOvertakeError(null);
+
+    if (!isUnlocked) {
+      // Show unlock CTA instead of fetching
+      setOvertakeLoading(false);
+      return;
+    }
+
+    const cars: any[] = raceState?.cars ?? [];
+    const driver = cars.find((c: any) => c.number === driverId);
+    if (!driver) {
+      setOvertakeError('Driver not found in current race state.');
+      setOvertakeLoading(false);
+      return;
+    }
+
+    // Find the car directly ahead
+    const sorted = [...cars].sort((a, b) => (a.pos ?? 99) - (b.pos ?? 99));
+    const idx = sorted.findIndex((c: any) => c.number === driverId);
+    const targetCar = idx > 0 ? sorted[idx - 1] : null;
+
+    if (!targetCar) {
+      setOvertakeError('This driver is leading — no car to overtake.');
+      setOvertakeLoading(false);
+      return;
+    }
+
+    setOvertakeLoading(true);
+    try {
+      const res = await fetch(
+        `http://localhost:8000/api/overtake_simulation?driver_number=${driverId}&target_number=${targetCar.number}`,
+        { headers: { 'session-id': sessionId.current } }
+      );
+      if (res.ok) {
+        setOvertakeResult(await res.json());
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setOvertakeError(body.detail ?? 'Request failed.');
+      }
+    } catch {
+      setOvertakeError('Network error — could not reach backend.');
+    } finally {
+      setOvertakeLoading(false);
+    }
+  }, [isUnlocked, raceState]);
+
+  // ─── Tire strategy ────────────────────────────────────────────────────────
+  const handleTireStrategy = useCallback(async (driverId: number) => {
+    setShowStrategyModal(true);
+    setStrategyResult(null);
+    setStrategyError(null);
+
+    if (!isUnlocked) {
+      setStrategyLoading(false);
+      return;
+    }
+
+    const session = raceState?.session;
+    const lapsRemaining = session?.laps_remaining ?? session?.total_laps ?? 20;
+
+    setStrategyLoading(true);
+    try {
+      const res = await fetch(
+        `http://localhost:8000/api/tire_strategy?driver_number=${driverId}&laps_remaining=${lapsRemaining}`,
+        { headers: { 'session-id': sessionId.current } }
+      );
+      if (res.ok) {
+        setStrategyResult(await res.json());
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setStrategyError(body.detail ?? 'Request failed.');
+      }
+    } catch {
+      setStrategyError('Network error — could not reach backend.');
+    } finally {
+      setStrategyLoading(false);
+    }
+  }, [isUnlocked, raceState]);
 
   /* ─── Loading State ─── */
   if (!raceState || !connected) {
@@ -233,6 +422,7 @@ export default function Home() {
               className="w-full text-left px-4 py-2 hover:bg-white/10 text-white flex items-center gap-2"
               onClick={() => {
                 setSelectedDriver(contextMenu.driverId);
+                handleOvertakeSim(contextMenu.driverId);
               }}
             >
               <Zap className="w-3 h-3 text-yellow-400" /> Sim Overtake (AI)
@@ -241,10 +431,228 @@ export default function Home() {
               className="w-full text-left px-4 py-2 hover:bg-white/10 text-white flex items-center gap-2"
               onClick={() => {
                 setSelectedDriver(contextMenu.driverId);
+                handleTireStrategy(contextMenu.driverId);
               }}
             >
               <Activity className="w-3 h-3 text-blue-400" /> Tire Strategy (AI)
             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ─── Overtake Simulation Modal ─────────────────────────────────────── */}
+      <AnimatePresence>
+        {showOvertakeModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+            onClick={() => setShowOvertakeModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.93, y: 14 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.93, y: 14 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-[min(460px,92vw)] bg-neutral-900 border border-white/10 rounded-2xl shadow-2xl p-6 font-[Outfit,sans-serif]"
+            >
+              <button
+                onClick={() => setShowOvertakeModal(false)}
+                className="absolute top-4 right-4 text-neutral-500 hover:text-white"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-2 mb-4">
+                <Zap className="w-4 h-4 text-yellow-400" />
+                <h3 className="font-black text-white text-sm uppercase tracking-widest">Overtake Simulation</h3>
+              </div>
+
+              {/* Locked */}
+              {!isUnlocked && (
+                <div className="flex flex-col items-center gap-4 py-4 text-center">
+                  <span className="text-4xl">🔒</span>
+                  <p className="text-sm text-neutral-400">AI Overtake Simulation is a Premium feature.</p>
+                  <button
+                    onClick={() => { handleDevUnlock(); setShowOvertakeModal(false); }}
+                    className="bg-red-600 hover:bg-red-500 text-white font-bold px-5 py-2 rounded-xl text-sm transition-colors"
+                  >
+                    Unlock Premium (Dev)
+                  </button>
+                </div>
+              )}
+
+              {/* Loading */}
+              {isUnlocked && overtakeLoading && (
+                <div className="flex flex-col items-center gap-3 py-8">
+                  <Loader2 className="w-9 h-9 text-yellow-400 animate-spin" />
+                  <p className="text-xs font-mono text-neutral-400 animate-pulse">Simulating overtake...</p>
+                </div>
+              )}
+
+              {/* Error */}
+              {isUnlocked && !overtakeLoading && overtakeError && (
+                <p className="text-sm text-red-400 font-mono text-center py-4">{overtakeError}</p>
+              )}
+
+              {/* Result */}
+              {isUnlocked && !overtakeLoading && overtakeResult && (
+                <div className="flex flex-col gap-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-center">
+                      <p className="text-[9px] text-neutral-500 uppercase tracking-widest mb-1">Attacker</p>
+                      <p className="font-black text-white text-lg">{overtakeResult.driver}</p>
+                      <p className="text-xs text-neutral-400">P{overtakeResult.driver_pos}</p>
+                    </div>
+                    <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-center">
+                      <p className="text-[9px] text-neutral-500 uppercase tracking-widest mb-1">Defender</p>
+                      <p className="font-black text-white text-lg">{overtakeResult.target}</p>
+                      <p className="text-xs text-neutral-400">P{overtakeResult.target_pos}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-black/40 rounded-lg p-2">
+                      <p className="text-[9px] text-neutral-500 uppercase">Gap</p>
+                      <p className="text-sm font-mono font-black text-white">{overtakeResult.gap_seconds}s</p>
+                    </div>
+                    <div className="bg-black/40 rounded-lg p-2">
+                      <p className="text-[9px] text-neutral-500 uppercase">Δ pace/lap</p>
+                      <p className="text-sm font-mono font-black text-yellow-400">
+                        {overtakeResult.pace_delta_per_lap > 0 ? '+' : ''}{overtakeResult.pace_delta_per_lap}s
+                      </p>
+                    </div>
+                    <div className="bg-black/40 rounded-lg p-2">
+                      <p className="text-[9px] text-neutral-500 uppercase">Laps ETA</p>
+                      <p className="text-sm font-mono font-black text-green-400">
+                        {overtakeResult.laps_to_catch ?? '∞'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
+                    <p className="text-[9px] text-blue-400 uppercase tracking-widest font-black mb-2 flex items-center gap-1.5">
+                      <MessageSquare className="w-3 h-3" /> Engineer Radio
+                    </p>
+                    <p className="text-sm text-neutral-200 italic font-serif leading-relaxed">
+                      &ldquo;{overtakeResult.radio_message}&rdquo;
+                    </p>
+                  </div>
+                  <p className="text-xs text-neutral-500 text-center">{overtakeResult.assessment}</p>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ─── Tire Strategy Modal ───────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showStrategyModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+            onClick={() => setShowStrategyModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.93, y: 14 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.93, y: 14 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-[min(460px,92vw)] bg-neutral-900 border border-white/10 rounded-2xl shadow-2xl p-6 font-[Outfit,sans-serif]"
+            >
+              <button
+                onClick={() => setShowStrategyModal(false)}
+                className="absolute top-4 right-4 text-neutral-500 hover:text-white"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-2 mb-4">
+                <Activity className="w-4 h-4 text-blue-400" />
+                <h3 className="font-black text-white text-sm uppercase tracking-widest">Tire Strategy</h3>
+              </div>
+
+              {/* Locked */}
+              {!isUnlocked && (
+                <div className="flex flex-col items-center gap-4 py-4 text-center">
+                  <span className="text-4xl">🔒</span>
+                  <p className="text-sm text-neutral-400">AI Tire Strategy is a Premium feature.</p>
+                  <button
+                    onClick={() => { handleDevUnlock(); setShowStrategyModal(false); }}
+                    className="bg-red-600 hover:bg-red-500 text-white font-bold px-5 py-2 rounded-xl text-sm transition-colors"
+                  >
+                    Unlock Premium (Dev)
+                  </button>
+                </div>
+              )}
+
+              {/* Loading */}
+              {isUnlocked && strategyLoading && (
+                <div className="flex flex-col items-center gap-3 py-8">
+                  <Loader2 className="w-9 h-9 text-blue-400 animate-spin" />
+                  <p className="text-xs font-mono text-neutral-400 animate-pulse">Calculating tire strategy...</p>
+                </div>
+              )}
+
+              {/* Error */}
+              {isUnlocked && !strategyLoading && strategyError && (
+                <p className="text-sm text-red-400 font-mono text-center py-4">{strategyError}</p>
+              )}
+
+              {/* Result */}
+              {isUnlocked && !strategyLoading && strategyResult && (() => {
+                const urgencyColor: Record<string, string> = {
+                  CRITICAL: 'text-red-400',
+                  HIGH: 'text-orange-400',
+                  MEDIUM: 'text-yellow-400',
+                  LOW: 'text-green-400',
+                };
+                return (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3">
+                      <div>
+                        <p className="text-[9px] text-neutral-500 uppercase tracking-widest mb-0.5">Driver</p>
+                        <p className="font-black text-white">{strategyResult.driver}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[9px] text-neutral-500 uppercase tracking-widest mb-0.5">Urgency</p>
+                        <p className={`font-black text-sm ${urgencyColor[strategyResult.urgency] ?? 'text-white'}`}>
+                          {strategyResult.urgency}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-black/40 rounded-xl p-3 text-center">
+                        <p className="text-[9px] text-neutral-500 uppercase mb-1">Now on</p>
+                        <p className="font-black text-white">{strategyResult.current_compound}</p>
+                        <p className="text-xs text-neutral-400">Age: {strategyResult.tire_age} laps</p>
+                      </div>
+                      <div className="bg-black/40 rounded-xl p-3 text-center">
+                        <p className="text-[9px] text-neutral-500 uppercase mb-1">Next compound</p>
+                        <p className="font-black text-green-400">{strategyResult.recommended_compound}</p>
+                        <p className="text-xs text-neutral-400">Box in ~{strategyResult.pit_in_laps} laps</p>
+                      </div>
+                    </div>
+                    <div className="flex justify-between bg-black/30 rounded-lg px-4 py-2 text-xs font-mono">
+                      <span className="text-neutral-400">Strategy</span>
+                      <span className="font-black text-white">{strategyResult.strategy}</span>
+                    </div>
+                    <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
+                      <p className="text-[9px] text-blue-400 uppercase tracking-widest font-black mb-2 flex items-center gap-1.5">
+                        <MessageSquare className="w-3 h-3" /> Engineer Radio
+                      </p>
+                      <p className="text-sm text-neutral-200 italic font-serif leading-relaxed">
+                        &ldquo;{strategyResult.radio_message}&rdquo;
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
