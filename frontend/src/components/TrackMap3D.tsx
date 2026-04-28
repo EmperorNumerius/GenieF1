@@ -144,6 +144,7 @@ export default function TrackMap3D({
 }: TrackMap3DProps) {
   const mapRef = useRef<MapRef | null>(null);
   const cameraTickRef = useRef(0);
+  const prevSelectedDriverRef = useRef<number | null>(selectedDriver);
   const [cameraMode, setCameraMode] = useState<CameraMode>('broadcast');
   const [timelineMode, setTimelineMode] = useState<TimelineMode>('live');
   const [replayFrameRaw, setReplayFrameRaw] = useState(0);
@@ -448,6 +449,28 @@ export default function TrackMap3D({
     mapRef.current.fitBounds(trackBounds, { padding: 64, duration: 1000, maxZoom: 16 });
   }, [trackBounds]);
 
+  // Fly-to selected driver when selectedDriver changes
+  useEffect(() => {
+    const prev = prevSelectedDriverRef.current;
+    prevSelectedDriverRef.current = selectedDriver;
+    if (selectedDriver === prev) return;
+    if (!mapRef.current || !selectedDriver) return;
+    const entry = activeCarLookup.get(selectedDriver);
+    if (!entry) return;
+    if (cameraMode === 'free' || cameraMode === 'top') {
+      mapRef.current.flyTo({ center: entry.coordinates, zoom: 15.5, duration: 900, essential: true });
+    } else {
+      mapRef.current.easeTo({
+        center: entry.coordinates,
+        zoom: cameraMode === 'broadcast' ? 17.25 : 16.4,
+        pitch: cameraMode === 'broadcast' ? 68 : 55,
+        bearing: entry.heading,
+        duration: 600,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDriver, cameraMode]);
+
   useEffect(() => {
     if (!mapRef.current || !trackBounds) return;
 
@@ -585,20 +608,26 @@ export default function TrackMap3D({
             id="car-markers-glow"
             type="circle"
             paint={{
-              'circle-radius': ['case', ['boolean', ['get', 'selected'], false], 21, 10],
+              'circle-radius': ['case', ['boolean', ['get', 'selected'], false], 26, 10],
               'circle-color': ['get', 'color'],
-              'circle-opacity': ['case', ['boolean', ['get', 'selected'], false], 0.38, 0.03],
-              'circle-blur': 1,
+              'circle-opacity': [
+                'case',
+                ['boolean', ['get', 'selected'], false],
+                0.55,
+                selectedDriver ? 0.02 : 0.03,
+              ],
+              'circle-blur': ['case', ['boolean', ['get', 'selected'], false], 0.7, 1],
             }}
           />
           <Layer
             id="car-markers-layer"
             type="circle"
             paint={{
-              'circle-radius': ['case', ['boolean', ['get', 'selected'], false], 8, 5],
+              'circle-radius': ['case', ['boolean', ['get', 'selected'], false], 9, 5],
               'circle-color': ['get', 'color'],
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#ffffff',
+              'circle-opacity': ['case', ['boolean', ['get', 'selected'], false], 1.0, selectedDriver ? 0.55 : 1.0],
+              'circle-stroke-width': ['case', ['boolean', ['get', 'selected'], false], 3, 1.5],
+              'circle-stroke-color': ['case', ['boolean', ['get', 'selected'], false], '#ffffff', 'rgba(255,255,255,0.5)'],
             }}
           />
           <Layer
