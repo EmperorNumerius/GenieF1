@@ -39,6 +39,12 @@ interface TireStrategyResult {
   radio_message: string;
 }
 
+type AiModalState =
+  | { kind: 'overtake'; loading: true; result: null; error: null }
+  | { kind: 'overtake'; loading: false; result: OvertakeResult | null; error: string | null }
+  | { kind: 'tire'; loading: true; result: null; error: null }
+  | { kind: 'tire'; loading: false; result: TireStrategyResult | null; error: string | null };
+
 export default function Home() {
   const [raceState, setRaceState] = useState<any>(null);
   const [selectedDriver, setSelectedDriver] = useState<number | null>(null);
@@ -146,7 +152,7 @@ export default function Home() {
       // Sort by position so index 0 = P1
       const sorted = [...cars].sort((a, b) => (a.pos ?? 99) - (b.pos ?? 99));
 
-      // Escape — close any open modal first, then deselect driver
+      // Esc — close any open modal or deselect driver
       if (e.key === 'Escape') {
         if (showOvertakeModal) { setShowOvertakeModal(false); return; }
         if (showStrategyModal) { setShowStrategyModal(false); return; }
@@ -160,7 +166,7 @@ export default function Home() {
         ? sorted.findIndex((c: any) => c.number === selectedDriver)
         : -1;
 
-      // ArrowUp / k — move to previous driver (lower position = ahead on track)
+      // ↑ / k — move to previous driver (lower position number = ahead)
       if (e.key === 'ArrowUp' || e.key === 'k') {
         e.preventDefault();
         const prev = currentIndex <= 0 ? sorted.length - 1 : currentIndex - 1;
@@ -168,7 +174,7 @@ export default function Home() {
         return;
       }
 
-      // ArrowDown / j — move to next driver
+      // ↓ / j — move to next driver
       if (e.key === 'ArrowDown' || e.key === 'j') {
         e.preventDefault();
         const next =
@@ -214,11 +220,20 @@ export default function Home() {
     setOvertakeError(null);
 
     if (!isUnlocked) {
+      // Show unlock CTA instead of fetching
       setOvertakeLoading(false);
       return;
     }
 
     const cars: any[] = raceState?.cars ?? [];
+    const driver = cars.find((c: any) => c.number === driverId);
+    if (!driver) {
+      setOvertakeError('Driver not found in current race state.');
+      setOvertakeLoading(false);
+      return;
+    }
+
+    // Find the car directly ahead
     const sorted = [...cars].sort((a, b) => (a.pos ?? 99) - (b.pos ?? 99));
     const idx = sorted.findIndex((c: any) => c.number === driverId);
     const targetCar = idx > 0 ? sorted[idx - 1] : null;
@@ -239,7 +254,7 @@ export default function Home() {
         setOvertakeResult(await res.json());
       } else {
         const body = await res.json().catch(() => ({}));
-        setOvertakeError((body as any).detail ?? 'Request failed.');
+        setOvertakeError(body.detail ?? 'Request failed.');
       }
     } catch {
       setOvertakeError('Network error — could not reach backend.');
@@ -272,7 +287,7 @@ export default function Home() {
         setStrategyResult(await res.json());
       } else {
         const body = await res.json().catch(() => ({}));
-        setStrategyError((body as any).detail ?? 'Request failed.');
+        setStrategyError(body.detail ?? 'Request failed.');
       }
     } catch {
       setStrategyError('Network error — could not reach backend.');
@@ -503,7 +518,7 @@ export default function Home() {
                       <p className="text-sm font-mono font-black text-white">{overtakeResult.gap_seconds}s</p>
                     </div>
                     <div className="bg-black/40 rounded-lg p-2">
-                      <p className="text-[9px] text-neutral-500 uppercase">delta pace/lap</p>
+                      <p className="text-[9px] text-neutral-500 uppercase">Δ pace/lap</p>
                       <p className="text-sm font-mono font-black text-yellow-400">
                         {overtakeResult.pace_delta_per_lap > 0 ? '+' : ''}{overtakeResult.pace_delta_per_lap}s
                       </p>
@@ -511,7 +526,7 @@ export default function Home() {
                     <div className="bg-black/40 rounded-lg p-2">
                       <p className="text-[9px] text-neutral-500 uppercase">Laps ETA</p>
                       <p className="text-sm font-mono font-black text-green-400">
-                        {overtakeResult.laps_to_catch ?? 'N/A'}
+                        {overtakeResult.laps_to_catch ?? '∞'}
                       </p>
                     </div>
                   </div>
