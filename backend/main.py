@@ -343,6 +343,9 @@ async def stripe_webhook(request: Request):
 
 @app.post("/api/unlock_dev")
 async def unlock_session_dev(session_id: str):
+    # Security: Prevent authorization bypass in production
+    if os.getenv("ENVIRONMENT", "").lower() == "production":
+        raise HTTPException(status_code=403, detail="Not available in production")
     unlocked_sessions.add(session_id)
     return {"status": f"Unlocked session {session_id}"}
 
