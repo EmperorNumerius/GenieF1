@@ -456,6 +456,146 @@ async def unlock_session_dev(session_id: str):
     return {"status": f"Unlocked session {session_id}"}
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# AI Brain endpoints — race engineer, Monte Carlo, anomaly detector, A/B strategy
+# ──────────────────────────────────────────────────────────────────────────────
+
+from race_engineer import race_engineer_response
+from monte_carlo import simulate_race_outcomes
+from anomaly import detect_anomalies
+
+
+class RaceEngineerRequest(BaseModel):
+    question: str
+    driver_id: Optional[str] = None
+
+
+class StrategySpec(BaseModel):
+    pit_lap: int
+    tire: str  # SOFT | MEDIUM | HARD
+
+
+class StrategyABRequest(BaseModel):
+    strategy_a: StrategySpec
+    strategy_b: StrategySpec
+    driver_id: str
+
+
+@app.post("/api/race_engineer")
+async def post_race_engineer(body: RaceEngineerRequest):
+    """Ask the AI race engineer a tactical question in the context of the live race."""
+    if not cached_state.get("cars"):
+        return {"response": "No live race data available — unable to provide tactical analysis."}
+    result = await race_engineer_response(
+        question=body.question,
+        race_state=cached_state,
+        driver_id=body.driver_id,
+    )
+    return {"response": result["response"]}
+
+
+@app.get("/api/monte_carlo")
+async def get_monte_carlo(simulations: int = 1000):
+    """Run Monte Carlo race outcome simulation for the current race state."""
+    if not cached_state.get("cars"):
+        return {"laps_simulated": 0, "simulations": simulations, "predictions": []}
+    return simulate_race_outcomes(race_state=cached_state, n_simulations=simulations)
+
+
+@app.get("/api/anomalies")
+async def get_anomalies():
+    """Detect telemetry and tactical anomalies for all cars in the current race state."""
+    if not cached_state.get("cars"):
+        return []
+    return detect_anomalies(race_state=cached_state)
+
+
+@app.post("/api/strategy_ab")
+async def post_strategy_ab(body: StrategyABRequest):
+    """
+    A/B compare two pit strategies for a given driver via Monte Carlo simulation.
+    Applies each strategy to the current race state and returns win probability
+    and average finishing position for each.
+    """
+    import copy
+
+    cars = cached_state.get("cars", [])
+    if not cars:
+        return {
+            "a_win": 0.0,
+            "b_win": 0.0,
+            "a_avg_pos": 0.0,
+            "b_avg_pos": 0.0,
+            "winner": "TIE",
+        }
+
+    def _apply_strategy(state: dict, driver_id: str, pit_lap: int, tire: str) -> dict:
+        """Return a deep copy of state with the strategy applied to the target driver."""
+        patched = copy.deepcopy(state)
+        needle = str(driver_id).strip().casefold()
+        for car in patched.get("cars", []):
+            if (
+                needle == str(car.get("id", "")).casefold()
+                or needle == str(car.get("number", "")).casefold()
+                or needle in str(car.get("name", "")).casefold()
+            ):
+                # Simulate: driver will pit at pit_lap → reset tire_age to 0 and set compound
+                car["tire"] = tire.upper()
+                car["tire_age"] = max(0, int(car.get("tire_age", 0)) - pit_lap)
+                break
+        return patched
+
+    n_sims = 500  # lighter run for A/B comparison
+
+    state_a = _apply_strategy(
+        cached_state, body.driver_id, body.strategy_a.pit_lap, body.strategy_a.tire
+    )
+    state_b = _apply_strategy(
+        cached_state, body.driver_id, body.strategy_b.pit_lap, body.strategy_b.tire
+    )
+
+    result_a = simulate_race_outcomes(race_state=state_a, n_simulations=n_sims)
+    result_b = simulate_race_outcomes(race_state=state_b, n_simulations=n_sims)
+
+    driver_needle = str(body.driver_id).strip().casefold()
+
+    def _find_driver_pred(predictions: list, needle: str) -> dict | None:
+        for p in predictions:
+            if (
+                needle == str(p.get("id", "")).casefold()
+                or needle in str(p.get("name", "")).casefold()
+            ):
+                return p
+        return None
+
+    pred_a = _find_driver_pred(result_a["predictions"], driver_needle)
+    pred_b = _find_driver_pred(result_b["predictions"], driver_needle)
+
+    a_win = pred_a["win_probability"] if pred_a else 0.0
+    b_win = pred_b["win_probability"] if pred_b else 0.0
+    a_avg = pred_a["expected_position"] if pred_a else 0.0
+    b_avg = pred_b["expected_position"] if pred_b else 0.0
+
+    if a_win > b_win:
+        winner = "A"
+    elif b_win > a_win:
+        winner = "B"
+    elif a_avg < b_avg:  # lower position = better
+        winner = "A"
+    elif b_avg < a_avg:
+        winner = "B"
+    else:
+        winner = "TIE"
+
+    return {
+        "a_win": round(a_win, 4),
+        "b_win": round(b_win, 4),
+        "a_avg_pos": round(a_avg, 2),
+        "b_avg_pos": round(b_avg, 2),
+        "winner": winner,
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
 
