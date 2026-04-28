@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Ferrari: stylised prancing horse silhouette in Scuderia red -->
+  <rect width="64" height="64" rx="8" fill="#E8002D"/>
+  <!-- Horse body -->
+  <path d="M30 46 Q24 44 22 38 Q20 32 23 27 Q25 23 29 22 L29 18 Q30 15 32 15 Q34 15 35 18 L35 22 Q39 23 41 27 Q44 32 42 38 Q40 44 34 46 Z" fill="white"/>
+  <!-- Horse head & neck -->
+  <path d="M29 22 Q26 20 25 17 Q24 14 27 13 Q30 12 32 15 Q34 12 37 13 Q40 14 39 17 Q38 20 35 22" fill="white"/>
+  <!-- Horse legs -->
+  <path d="M26 46 L24 54 M30 47 L29 55 M34 47 L35 55 M38 46 L40 54" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Horse tail -->
+  <path d="M34 36 Q42 33 44 26 Q45 22 43 20" stroke="white" stroke-width="2" fill="none" stroke-linecap="round"/>
+</svg>

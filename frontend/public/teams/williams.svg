@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Williams: bold W wordmark in light blue -->
+  <rect width="64" height="64" rx="8" fill="#00A3E0"/>
+  <!-- Bold W -->
+  <path d="M8 18 L16 46 L24 28 L32 46 L40 28 L48 46 L56 18" stroke="white" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
