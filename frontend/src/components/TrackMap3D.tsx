@@ -1,8 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import MapLibreMap, { Layer, MapRef, Source } from 'react-map-gl/maplibre';
+import MapLibreMap, { AttributionControl, Layer, MapRef, Source } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 import { Map as MapIcon, Maximize, Monitor, Navigation, Pause, Play, RotateCcw } from 'lucide-react';
+import { resolveCircuit } from '../lib/circuits';
+import type { CircuitConfig } from '../lib/circuits';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type LngLat = [number, number];
 type CameraMode = 'free' | 'chase' | 'top' | 'broadcast';
@@ -46,29 +50,74 @@ type CarFeatureProperties = {
   pos: number;
 };
 
-const TRACK_ORIGINS: Record<
-  string,
-  { lat: number; lng: number; rot: number; scale: number; flip: boolean }
-> = {
-  Shanghai: { lat: 31.3387, lng: 121.2201, rot: 0, scale: 0.000009, flip: false },
-  Melbourne: { lat: -37.8497, lng: 144.968, rot: 0, scale: 0.000009, flip: false },
-  Bahrain: { lat: 26.0325, lng: 50.5106, rot: 0, scale: 0.000009, flip: false },
-  Default: { lat: 31.3387, lng: 121.2201, rot: 0, scale: 0.000009, flip: false },
+// ─── MapLibre style with OSM raster tiles ─────────────────────────────────────
+// We inject the OSM tile source directly into a minimal style JSON object so
+// that no external style CDN is required.  A dark-mode CSS filter is applied
+// to the tile canvas via a scoped class so that text/vector overlays are
+// unaffected.
+
+const OSM_MAP_STYLE = {
+  version: 8 as const,
+  glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+  sources: {
+    'osm-tiles': {
+      type: 'raster' as const,
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution:
+        '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap contributors</a>',
+      maxzoom: 19,
+    },
+  },
+  layers: [
+    {
+      id: 'osm-tiles-layer',
+      type: 'raster' as const,
+      source: 'osm-tiles',
+      minzoom: 0,
+      maxzoom: 22,
+      paint: {
+        'raster-opacity': 1,
+      },
+    },
+  ],
 };
+
+// ─── Replay buffer ────────────────────────────────────────────────────────────
 
 const MAX_REPLAY_POINTS = 2400;
 
-function f1ToLngLat(
-  x: number,
-  y: number,
-  meta = TRACK_ORIGINS.Default
-): LngLat {
-  const rX = x * Math.cos(meta.rot) - y * Math.sin(meta.rot);
-  const rY = x * Math.sin(meta.rot) + y * Math.cos(meta.rot);
-  const lat = meta.lat + (meta.flip ? -rY : rY) * meta.scale;
-  const lng = meta.lng + (rX * meta.scale / Math.cos((meta.lat * Math.PI) / 180));
+// ─── Coordinate transform ─────────────────────────────────────────────────────
+
+/**
+ * Convert F1 telemetry (x, y) to WGS-84 [lng, lat] using per-circuit
+ * calibration from circuits.ts.
+ *
+ * Steps:
+ *  1. Rotate the (x, y) vector by rotationDeg (clockwise).
+ *  2. Scale to degrees using scaleX / scaleY.
+ *  3. Apply cosine correction to longitude.
+ *  4. Offset from circuit centre.
+ *
+ * flipY handles circuits where the telemetry Y axis increases southward.
+ */
+function f1ToLngLat(x: number, y: number, cfg: CircuitConfig): LngLat {
+  const rad = (cfg.rotationDeg * Math.PI) / 180;
+  const cosR = Math.cos(rad);
+  const sinR = Math.sin(rad);
+
+  const rx = x * cosR - y * sinR;
+  const ry = x * sinR + y * cosR;
+
+  const cosLat = Math.cos((cfg.centerLat * Math.PI) / 180);
+
+  const lat = cfg.centerLat + (cfg.flipY ? -ry : ry) * cfg.scaleY;
+  const lng = cfg.centerLng + (rx * cfg.scaleX) / (cosLat || 1);
+
   return [lng, lat];
 }
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function toMapColor(color?: string): string {
   if (!color) return '#888';
@@ -134,6 +183,8 @@ function distanceMeters(a: LngLat, b: LngLat): number {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function TrackMap3D({
   trackOutline,
   cars,
@@ -150,39 +201,58 @@ export default function TrackMap3D({
   const [isReplayPlaying, setIsReplayPlaying] = useState(false);
   const [replaySpeed, setReplaySpeed] = useState(2);
   const [replayTrails, setReplayTrails] = useState<Record<string, LngLat[]>>({});
+  const [mapError, setMapError] = useState<string | null>(null);
 
-  const meta = useMemo(() => {
-    if (!circuitName) return TRACK_ORIGINS.Default;
-    const resolved = Object.entries(TRACK_ORIGINS).find(([name]) =>
-      circuitName.toLowerCase().includes(name.toLowerCase())
-    );
-    return resolved?.[1] || TRACK_ORIGINS.Default;
-  }, [circuitName]);
+  // ── Circuit calibration ──────────────────────────────────────────────────
+
+  const circuitCfg = useMemo<CircuitConfig>(() => resolveCircuit(circuitName), [circuitName]);
+
+  // ── Fly to circuit when circuitName changes ───────────────────────────────
+
+  const prevCircuitRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (prevCircuitRef.current === circuitName) return;
+    prevCircuitRef.current = circuitName;
+
+    mapRef.current.flyTo({
+      center: [circuitCfg.centerLng, circuitCfg.centerLat],
+      zoom: circuitCfg.zoom,
+      pitch: 0,
+      bearing: 0,
+      duration: 1200,
+    });
+  }, [circuitCfg, circuitName]);
+
+  // ── Coordinate projections ───────────────────────────────────────────────
 
   const projectedTrackOutline = useMemo<LngLat[]>(() => {
     if (!trackOutline?.length) return [];
-    return trackOutline.map((pt) => f1ToLngLat(pt[0], pt[1], meta));
-  }, [trackOutline, meta]);
+    return trackOutline.map((pt) => f1ToLngLat(pt[0], pt[1], circuitCfg));
+  }, [trackOutline, circuitCfg]);
 
   const projectedFeedTrails = useMemo<Record<string, LngLat[]>>(() => {
     const trails: Record<string, LngLat[]> = {};
     for (const [driverNo, rawTrail] of Object.entries(positionTrails || {})) {
       if (!rawTrail?.length) continue;
-      trails[driverNo] = rawTrail.map((pt) => f1ToLngLat(pt[0], pt[1], meta));
+      trails[driverNo] = rawTrail.map((pt) => f1ToLngLat(pt[0], pt[1], circuitCfg));
     }
     return trails;
-  }, [positionTrails, meta]);
+  }, [positionTrails, circuitCfg]);
+
+  // ── Reset replay state on circuit change ─────────────────────────────────
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReplayTrails({});
     setTimelineMode('live');
     setIsReplayPlaying(false);
     setReplayFrameRaw(0);
-  }, [meta]);
+  }, [circuitCfg]);
+
+  // ── Accumulate replay buffer ──────────────────────────────────────────────
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReplayTrails((prev) => {
       let changed = false;
       const next: Record<string, LngLat[]> = { ...prev };
@@ -222,13 +292,21 @@ export default function TrackMap3D({
     });
   }, [projectedFeedTrails]);
 
+  // ── Frame calculations ────────────────────────────────────────────────────
+
   const replayMaxFrame = useMemo(() => {
-    const maxLength = Object.values(replayTrails).reduce((best, trail) => Math.max(best, trail.length), 0);
+    const maxLength = Object.values(replayTrails).reduce(
+      (best, trail) => Math.max(best, trail.length),
+      0
+    );
     return Math.max(0, maxLength - 1);
   }, [replayTrails]);
 
   const liveMaxFrame = useMemo(() => {
-    const maxLength = Object.values(projectedFeedTrails).reduce((best, trail) => Math.max(best, trail.length), 0);
+    const maxLength = Object.values(projectedFeedTrails).reduce(
+      (best, trail) => Math.max(best, trail.length),
+      0
+    );
     return Math.max(0, maxLength - 1);
   }, [projectedFeedTrails]);
 
@@ -249,7 +327,8 @@ export default function TrackMap3D({
     return () => clearInterval(interval);
   }, [timelineMode, isReplayPlaying, replaySpeed, replayMaxFrame]);
 
-  const replayFrame = timelineMode === 'live' ? replayMaxFrame : Math.min(replayFrameRaw, replayMaxFrame);
+  const replayFrame =
+    timelineMode === 'live' ? replayMaxFrame : Math.min(replayFrameRaw, replayMaxFrame);
   const activeFrame = timelineMode === 'live' ? liveMaxFrame : replayFrame;
   const activeTrailSource = timelineMode === 'live' ? projectedFeedTrails : replayTrails;
 
@@ -263,6 +342,8 @@ export default function TrackMap3D({
     }
     return segments;
   }, [activeTrailSource, timelineMode, activeFrame]);
+
+  // ── GeoJSON features ──────────────────────────────────────────────────────
 
   const outlineGeojson = useMemo<FeatureCollection<LineString> | null>(() => {
     if (!projectedTrackOutline.length) return null;
@@ -322,7 +403,7 @@ export default function TrackMap3D({
         }
 
         if (!coordinates && car.location?.x != null && car.location?.y != null) {
-          coordinates = f1ToLngLat(car.location.x, car.location.y, meta);
+          coordinates = f1ToLngLat(car.location.x, car.location.y, circuitCfg);
         }
 
         if (!coordinates) return null;
@@ -330,11 +411,18 @@ export default function TrackMap3D({
         return {
           car,
           coordinates,
-          heading: headingFromTrail(trail, timelineMode === 'live' ? liveMaxFrame : activeFrame),
+          heading: headingFromTrail(
+            trail,
+            timelineMode === 'live' ? liveMaxFrame : activeFrame
+          ),
         };
       })
-      .filter((entry): entry is { car: CarState; coordinates: LngLat; heading: number } => !!entry);
-  }, [cars, activeTrailSource, timelineMode, activeFrame, meta, liveMaxFrame]);
+      .filter(
+        (
+          entry
+        ): entry is { car: CarState; coordinates: LngLat; heading: number } => !!entry
+      );
+  }, [cars, activeTrailSource, timelineMode, activeFrame, circuitCfg, liveMaxFrame]);
 
   const activeCarLookup = useMemo(() => {
     const lookup = new Map<number, { car: CarState; coordinates: LngLat; heading: number }>();
@@ -443,6 +531,8 @@ export default function TrackMap3D({
     ] as [LngLat, LngLat];
   }, [projectedTrackOutline]);
 
+  // ── Camera effects ────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!mapRef.current || !trackBounds) return;
     mapRef.current.fitBounds(trackBounds, { padding: 64, duration: 1000, maxZoom: 16 });
@@ -492,53 +582,140 @@ export default function TrackMap3D({
   }, [cars]);
 
   const replayProgress =
-    replayMaxFrame > 0 ? Math.round((Math.min(replayFrame, replayMaxFrame) / replayMaxFrame) * 100) : 0;
+    replayMaxFrame > 0
+      ? Math.round((Math.min(replayFrame, replayMaxFrame) / replayMaxFrame) * 100)
+      : 0;
+
+  // ── Error fallback ────────────────────────────────────────────────────────
+
+  if (mapError) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-neutral-950 rounded-xl border border-white/10 gap-4 p-8">
+        <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center">
+          <MapIcon className="w-6 h-6 text-red-400" />
+        </div>
+        <div className="text-center max-w-xs">
+          <p className="text-sm font-bold text-neutral-300 mb-1">Map tiles unavailable</p>
+          <p className="text-xs font-mono text-neutral-500 leading-relaxed">
+            OpenStreetMap tiles could not be loaded. This may be due to a network restriction or
+            ad-blocker. Live telemetry data is still being received — try refreshing or check your
+            network connection.
+          </p>
+          <p className="text-[10px] font-mono text-neutral-700 mt-3 italic">Error: {mapError}</p>
+        </div>
+        <button
+          onClick={() => setMapError(null)}
+          className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-xs font-bold text-neutral-300 hover:bg-white/10 transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="w-full h-full relative isolate overflow-hidden rounded-xl">
-      <MapLibreMap
-        ref={mapRef}
-        initialViewState={{
-          longitude: meta.lng,
-          latitude: meta.lat,
-          zoom: 13,
-          pitch: 45,
-        }}
-        mapStyle="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
-        interactive={cameraMode === 'free'}
-        onClick={(e) => {
-          const features = mapRef.current?.queryRenderedFeatures(e.point, {
-            layers: ['car-markers-layer'],
-          });
-          if (features && features.length > 0) {
-            const selectedNumber = Number(features[0].properties?.number);
-            if (Number.isFinite(selectedNumber)) onSelectDriver(selectedNumber);
-          }
-        }}
-      >
-        {outlineGeojson && (
-          <Source id="track-outline" type="geojson" data={outlineGeojson}>
+      {/*
+        Dark-mode filter applied only to the raster tile canvas.
+        invert(100%) flips the light OSM tiles to a dark background;
+        hue-rotate(180deg) corrects the resulting colour cast so that
+        roads, parks and water remain recognisably coloured.
+        brightness / contrast fine-tune contrast to match the app palette.
+        The filter class wraps only the MapLibre canvas — the vector layer
+        overlay divs that MapLibre appends outside the canvas are siblings
+        of the osm-dark-filter div and are therefore unaffected.
+      */}
+      <style>{`
+        .osm-dark-filter .maplibregl-canvas {
+          filter: invert(100%) hue-rotate(180deg) brightness(0.85) contrast(1.1);
+        }
+        .maplibregl-ctrl-attrib {
+          background: rgba(0,0,0,0.7) !important;
+          color: #6b7280 !important;
+          font-size: 9px !important;
+          border-radius: 4px !important;
+        }
+        .maplibregl-ctrl-attrib a {
+          color: #9ca3af !important;
+        }
+      `}</style>
+
+      {/* Tile canvas wrapper — receives the dark CSS filter */}
+      <div className="osm-dark-filter w-full h-full">
+        <MapLibreMap
+          ref={mapRef}
+          initialViewState={{
+            longitude: circuitCfg.centerLng,
+            latitude: circuitCfg.centerLat,
+            zoom: circuitCfg.zoom,
+            pitch: 45,
+          }}
+          mapStyle={OSM_MAP_STYLE}
+          interactive={cameraMode === 'free'}
+          attributionControl={false}
+          onError={(e) => {
+            // Surface tile-load failures only; ignore routine WebGL messages
+            const msg =
+              (e as { error?: { message?: string } }).error?.message ?? String(e);
+            if (msg && msg.toLowerCase().includes('tile')) {
+              setMapError(msg);
+            }
+          }}
+          onClick={(e) => {
+            const features = mapRef.current?.queryRenderedFeatures(e.point, {
+              layers: ['car-markers-layer'],
+            });
+            if (features && features.length > 0) {
+              const selectedNumber = Number(features[0].properties?.number);
+              if (Number.isFinite(selectedNumber)) onSelectDriver(selectedNumber);
+            }
+          }}
+        >
+          {/* Track outline */}
+          {outlineGeojson && (
+            <Source id="track-outline" type="geojson" data={outlineGeojson}>
+              <Layer
+                id="track-outline-glow"
+                type="line"
+                paint={{
+                  'line-color': '#ef4444',
+                  'line-opacity': 0.25,
+                  'line-width': 18,
+                  'line-blur': 1.4,
+                }}
+                layout={{
+                  'line-cap': 'round',
+                  'line-join': 'round',
+                }}
+              />
+              <Layer
+                id="track-outline-layer"
+                type="line"
+                paint={{
+                  'line-color': '#ffffff',
+                  'line-opacity': 0.28,
+                  'line-width': 9,
+                }}
+                layout={{
+                  'line-cap': 'round',
+                  'line-join': 'round',
+                }}
+              />
+            </Source>
+          )}
+
+          {/* Driver trails */}
+          <Source id="track-trails" type="geojson" data={trailsGeojson}>
             <Layer
-              id="track-outline-glow"
+              id="track-trails-layer"
               type="line"
               paint={{
-                'line-color': '#ef4444',
-                'line-opacity': 0.2,
-                'line-width': 16,
-                'line-blur': 1.2,
-              }}
-              layout={{
-                'line-cap': 'round',
-                'line-join': 'round',
-              }}
-            />
-            <Layer
-              id="track-outline-layer"
-              type="line"
-              paint={{
-                'line-color': '#ffffff',
-                'line-opacity': 0.22,
-                'line-width': 8,
+                'line-color': ['get', 'color'],
+                'line-width': ['get', 'width'],
+                'line-opacity': ['get', 'opacity'],
+                'line-blur': 0.25,
               }}
               layout={{
                 'line-cap': 'round',
@@ -546,88 +723,90 @@ export default function TrackMap3D({
               }}
             />
           </Source>
-        )}
 
-        <Source id="track-trails" type="geojson" data={trailsGeojson}>
-          <Layer
-            id="track-trails-layer"
-            type="line"
-            paint={{
-              'line-color': ['get', 'color'],
-              'line-width': ['get', 'width'],
-              'line-opacity': ['get', 'opacity'],
-              'line-blur': 0.25,
-            }}
-            layout={{
-              'line-cap': 'round',
-              'line-join': 'round',
-            }}
-          />
-        </Source>
+          {/* Projection vector for selected driver */}
+          {selectedProjectionGeojson && (
+            <Source
+              id="selected-driver-projection"
+              type="geojson"
+              data={selectedProjectionGeojson}
+            >
+              <Layer
+                id="selected-driver-projection-layer"
+                type="line"
+                paint={{
+                  'line-color': '#f43f5e',
+                  'line-width': 3,
+                  'line-opacity': 0.65,
+                  'line-dasharray': [1.2, 1.1],
+                }}
+              />
+            </Source>
+          )}
 
-        {selectedProjectionGeojson && (
-          <Source id="selected-driver-projection" type="geojson" data={selectedProjectionGeojson}>
+          {/* Car markers */}
+          <Source id="car-markers" type="geojson" data={carsGeojson}>
             <Layer
-              id="selected-driver-projection-layer"
-              type="line"
+              id="car-markers-glow"
+              type="circle"
               paint={{
-                'line-color': '#f43f5e',
-                'line-width': 3,
-                'line-opacity': 0.65,
-                'line-dasharray': [1.2, 1.1],
+                'circle-radius': ['case', ['boolean', ['get', 'selected'], false], 21, 10],
+                'circle-color': ['get', 'color'],
+                'circle-opacity': [
+                  'case',
+                  ['boolean', ['get', 'selected'], false],
+                  0.38,
+                  0.03,
+                ],
+                'circle-blur': 1,
+              }}
+            />
+            <Layer
+              id="car-markers-layer"
+              type="circle"
+              paint={{
+                'circle-radius': ['case', ['boolean', ['get', 'selected'], false], 8, 5],
+                'circle-color': ['get', 'color'],
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#ffffff',
+              }}
+            />
+            <Layer
+              id="car-labels-layer"
+              type="symbol"
+              layout={{
+                'text-field': [
+                  'concat',
+                  ['get', 'id'],
+                  '  P',
+                  ['to-string', ['get', 'pos']],
+                  '  ',
+                  ['to-string', ['get', 'speed']],
+                  ' km/h',
+                ],
+                'text-size': ['case', ['boolean', ['get', 'selected'], false], 14, 10],
+                'text-offset': [0, 1.4],
+                'text-anchor': 'top',
+                'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+              }}
+              paint={{
+                'text-color': '#ffffff',
+                'text-halo-color': '#000000',
+                'text-halo-width': 2,
               }}
             />
           </Source>
-        )}
 
-        <Source id="car-markers" type="geojson" data={carsGeojson}>
-          <Layer
-            id="car-markers-glow"
-            type="circle"
-            paint={{
-              'circle-radius': ['case', ['boolean', ['get', 'selected'], false], 21, 10],
-              'circle-color': ['get', 'color'],
-              'circle-opacity': ['case', ['boolean', ['get', 'selected'], false], 0.38, 0.03],
-              'circle-blur': 1,
-            }}
+          {/* Attribution — bottom-right, dark-styled via CSS above */}
+          <AttributionControl
+            position="bottom-right"
+            customAttribution="© OpenStreetMap contributors"
+            compact={true}
           />
-          <Layer
-            id="car-markers-layer"
-            type="circle"
-            paint={{
-              'circle-radius': ['case', ['boolean', ['get', 'selected'], false], 8, 5],
-              'circle-color': ['get', 'color'],
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#ffffff',
-            }}
-          />
-          <Layer
-            id="car-labels-layer"
-            type="symbol"
-            layout={{
-              'text-field': [
-                'concat',
-                ['get', 'id'],
-                '  P',
-                ['to-string', ['get', 'pos']],
-                '  ',
-                ['to-string', ['get', 'speed']],
-                ' km/h',
-              ],
-              'text-size': ['case', ['boolean', ['get', 'selected'], false], 14, 10],
-              'text-offset': [0, 1.4],
-              'text-anchor': 'top',
-              'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-            }}
-            paint={{
-              'text-color': '#ffffff',
-              'text-halo-color': '#000000',
-              'text-halo-width': 2,
-            }}
-          />
-        </Source>
-      </MapLibreMap>
+        </MapLibreMap>
+      </div>
 
+      {/* ── Camera mode controls ── */}
       <div className="absolute top-4 left-4 z-10 flex flex-wrap gap-2 max-w-[70%]">
         <button
           onClick={() => setCameraMode('free')}
@@ -677,19 +856,26 @@ export default function TrackMap3D({
         </button>
       </div>
 
+      {/* ── Battle radar ── */}
       {selectedDriver && battleInfo && (
         <div className="absolute top-4 right-4 z-10 bg-black/75 backdrop-blur-xl border border-white/15 rounded-xl px-3 py-2 text-[10px] font-mono min-w-[220px]">
-          <p className="text-neutral-300 uppercase tracking-widest font-black mb-1">Battle Radar</p>
+          <p className="text-neutral-300 uppercase tracking-widest font-black mb-1">
+            Battle Radar
+          </p>
           <p className="text-neutral-200">
             Ahead:{' '}
             <span className="font-black text-white">
-              {battleInfo.ahead ? `${battleInfo.ahead.id} (+${battleInfo.aheadGap ?? '--'}m)` : 'None'}
+              {battleInfo.ahead
+                ? `${battleInfo.ahead.id} (+${battleInfo.aheadGap ?? '--'}m)`
+                : 'None'}
             </span>
           </p>
           <p className="text-neutral-200">
             Behind:{' '}
             <span className="font-black text-white">
-              {battleInfo.behind ? `${battleInfo.behind.id} (-${battleInfo.behindGap ?? '--'}m)` : 'None'}
+              {battleInfo.behind
+                ? `${battleInfo.behind.id} (-${battleInfo.behindGap ?? '--'}m)`
+                : 'None'}
             </span>
           </p>
           <p className="text-neutral-500 mt-1">
@@ -698,6 +884,7 @@ export default function TrackMap3D({
         </div>
       )}
 
+      {/* ── Timeline / replay controls ── */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-[min(740px,94%)] bg-black/75 border border-white/15 backdrop-blur-xl rounded-xl px-3 py-3">
         <div className="flex items-center gap-2 mb-2">
           <button
@@ -769,7 +956,9 @@ export default function TrackMap3D({
             }}
             className="w-full accent-red-500"
           />
-          <p className="text-[10px] font-mono text-neutral-300 w-12 text-right">{replayProgress}%</p>
+          <p className="text-[10px] font-mono text-neutral-300 w-12 text-right">
+            {replayProgress}%
+          </p>
         </div>
       </div>
     </div>
