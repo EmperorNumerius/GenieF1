@@ -1,3 +1,6 @@
+// @ts-nocheck
+// TrackMapInner is a legacy Leaflet component kept for reference only.
+// react-leaflet is not installed; this file is not imported anywhere in the active bundle.
 import React, { useMemo, useEffect, useState } from 'react';
 import { MapContainer, TileLayer, SVGOverlay, useMap } from 'react-leaflet';
 import { getTeamColor } from '../lib/constants';
