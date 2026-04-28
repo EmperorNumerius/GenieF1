@@ -8,6 +8,9 @@ import { RaceControlBanner } from '../components/RaceControlBanner';
 import { SidebarStandings } from '../components/SidebarStandings';
 import { TrackMap } from '../components/TrackMap';
 import { TelemetryDashboard } from '../components/TelemetryDashboard';
+import { AIInsightsPanel } from '../components/AIInsightsPanel';
+import { SectorHeatmap } from '../components/SectorHeatmap';
+import { BattleView } from '../components/BattleView';
 import { getTeamColor } from '../lib/constants';
 
 // ─── Types for AI modal results ───────────────────────────────────────────────
@@ -815,8 +818,17 @@ export default function Home() {
           </div>
         </div>
 
-        {/* RIGHT: TELEMETRY */}
-        <TelemetryDashboard selected={selected} isUnlocked={isUnlocked} insight={insight} />
+        {/* RIGHT: TELEMETRY + AI BRAIN */}
+        <div className="flex flex-col gap-3 w-[300px] shrink-0">
+          <TelemetryDashboard selected={selected} isUnlocked={isUnlocked} insight={insight} />
+          <AIInsightsPanel selectedDriver={selectedDriver} raceState={raceState} />
+        </div>
+      </div>
+
+      {/* BOTTOM RAIL: SECTOR HEATMAP + BATTLE VIEW */}
+      <div className="px-4 pb-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <SectorHeatmap cars={(raceState?.cars || []) as any} />
+        <BattleView cars={(raceState?.cars || []) as any} />
       </div>
     </main>
   );
