@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Racing Bulls (RB): stylised RB letterform in periwinkle blue -->
+  <rect width="64" height="64" rx="8" fill="#6692FF"/>
+  <!-- R -->
+  <path d="M12 48 L12 16 L24 16 Q32 16 32 24 Q32 30 26 32 L34 48" stroke="white" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="12" y1="32" x2="26" y2="32" stroke="white" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- B -->
+  <path d="M38 16 L38 48 M38 16 L48 16 Q56 16 56 24 Q56 32 38 32 M38 32 L50 32 Q58 32 58 40 Q58 48 48 48 L38 48" stroke="white" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

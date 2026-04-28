@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Audi F1 (formerly Sauber/Kick Sauber): four rings in silver/grey -->
+  <rect width="64" height="64" rx="8" fill="#1a1a1a"/>
+  <!-- Four interlocking rings - Audi motif -->
+  <circle cx="16" cy="32" r="10" fill="none" stroke="#C0C0C0" stroke-width="3"/>
+  <circle cx="28" cy="32" r="10" fill="none" stroke="#C0C0C0" stroke-width="3"/>
+  <circle cx="40" cy="32" r="10" fill="none" stroke="#C0C0C0" stroke-width="3"/>
+  <circle cx="52" cy="32" r="10" fill="none" stroke="#C0C0C0" stroke-width="3"/>
+  <!-- Mask between rings to simulate links -->
+  <rect x="0" y="0" width="64" height="64" rx="8" fill="none"/>
+</svg>

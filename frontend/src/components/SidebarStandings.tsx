@@ -5,6 +5,7 @@ import { motion, LayoutGroup } from 'framer-motion';
 import { Activity } from 'lucide-react';
 import { getTeamColor, TIRE_COLORS, formatInterval } from '../lib/constants';
 import { DrsPill } from './TelemetryDashboard';
+import { countryCodeToFlag, getTeamLogo } from '../lib/drivers';
 
 interface SidebarStandingsProps {
   raceState: any;
@@ -87,7 +88,10 @@ export function SidebarStandings({
             const isSelected = selectedDriver === car.number;
             const tireColor = TIRE_COLORS[car.tire?.toUpperCase()] || '#666';
             const teamColor = getTeamColor(car);
-            const avatarUrl = `https://ui-avatars.com/api/?name=${car.id}&background=${teamColor.replace('#', '')}&color=fff&bold=true&size=64`;
+            const flag = countryCodeToFlag(car.country_code);
+            const teamLogo = getTeamLogo(car.team);
+            const headshot = car.headshot_url as string | undefined;
+            const avatarFallback = `https://ui-avatars.com/api/?name=${car.id}&background=${teamColor.replace('#', '')}&color=fff&bold=true&size=64`;
             const s1Color = getSectorColor(car.number, 's1', car.sector_1);
             const s2Color = getSectorColor(car.number, 's2', car.sector_2);
             const s3Color = getSectorColor(car.number, 's3', car.sector_3);
@@ -112,12 +116,30 @@ export function SidebarStandings({
                 style={isSelected ? { borderLeftColor: teamColor } : undefined}
               >
                 <span className="w-6 text-center font-mono text-xs font-black text-neutral-400 bg-black/50 rounded py-1">{car.pos || '-'}</span>
-                <div className="w-9 h-9 rounded-lg shrink-0 overflow-hidden border-2" style={{ borderColor: teamColor }}>
-                  <img src={avatarUrl} alt={`Driver ${car.id}`} className="w-full h-full object-cover" />
+                <div
+                  className="relative w-9 h-9 rounded-lg shrink-0 overflow-hidden border-2"
+                  style={{ borderColor: teamColor, background: `${teamColor}33` }}
+                >
+                  <img
+                    src={headshot || avatarFallback}
+                    alt={`${car.name || car.id} headshot`}
+                    className="w-full h-full object-cover object-top"
+                    onError={(e) => {
+                      const img = e.currentTarget;
+                      if (img.src !== avatarFallback) img.src = avatarFallback;
+                    }}
+                  />
+                  <img
+                    src={teamLogo}
+                    alt=""
+                    aria-hidden
+                    className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-black/80 rounded-tl p-0.5"
+                  />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
+                      {flag && <span className="text-base leading-none" aria-label={`${car.country_code} flag`}>{flag}</span>}
                       <span className="font-bold text-sm text-neutral-100 uppercase tracking-widest">{car.id}</span>
                       <DrsPill drs={car.drs} />
                     </div>

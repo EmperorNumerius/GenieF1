@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Alpine: mountain peak motif in pink/blue -->
+  <rect width="64" height="64" rx="8" fill="#1B1B4B"/>
+  <!-- Mountain peaks -->
+  <polygon points="32,12 14,44 50,44" fill="#FF87BC"/>
+  <polygon points="44,20 30,44 58,44" fill="#FF87BC" opacity="0.7"/>
+  <!-- Snow cap -->
+  <polygon points="32,12 27,22 37,22" fill="white"/>
+  <!-- A shape base line -->
+  <line x1="10" y1="50" x2="54" y2="50" stroke="#FF87BC" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

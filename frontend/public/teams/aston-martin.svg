@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Aston Martin: wings emblem in British racing green -->
+  <rect width="64" height="64" rx="8" fill="#229971"/>
+  <!-- Wings - left -->
+  <path d="M32 30 Q22 24 10 26 Q14 30 18 30 Q14 33 10 38 Q20 36 28 32" fill="white"/>
+  <!-- Wings - right -->
+  <path d="M32 30 Q42 24 54 26 Q50 30 46 30 Q50 33 54 38 Q44 36 36 32" fill="white"/>
+  <!-- Centre shield -->
+  <path d="M32 22 L26 26 L26 38 Q29 44 32 46 Q35 44 38 38 L38 26 Z" fill="white"/>
+  <path d="M32 25 L28.5 28 L28.5 37 Q30.5 42 32 43.5 Q33.5 42 35.5 37 L35.5 28 Z" fill="#229971"/>
+  <!-- AM initial -->
+  <text x="29" y="36" font-family="serif" font-size="7" font-weight="bold" fill="white">AM</text>
+</svg>

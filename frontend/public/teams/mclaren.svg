@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- McLaren: stylised speedmark / swoosh in papaya orange -->
+  <rect width="64" height="64" rx="8" fill="#FF8000"/>
+  <!-- McLaren speedmark: sweeping chevron shape -->
+  <path d="M8 42 Q16 28 32 24 Q48 20 56 28" stroke="white" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M8 50 Q18 34 32 30 Q46 26 56 36" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.6"/>
+  <!-- MCL wordmark hint: bold M shape -->
+  <path d="M18 52 L18 38 L24 46 L30 38 L30 52" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
