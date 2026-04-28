@@ -110,3 +110,160 @@ def predict_ers_impact(driver_id: str, ers_level: int, laps_remaining: int) -> D
         "outlook": outlook,
         "risk": risk,
     }
+
+
+def predict_overtake(
+    driver: Dict,
+    target: Dict,
+    all_cars: List[Dict],
+) -> Dict:
+    """
+    Heuristic estimate of how many laps it would take the given driver
+    to catch and pass the target ahead of them, based on pace delta
+    and DRS availability.
+    """
+    driver_name = driver.get("name", driver.get("id", "Driver"))
+    target_name = target.get("name", target.get("id", "Target"))
+    driver_pos = driver.get("pos", 99)
+    target_pos = target.get("pos", 98)
+
+    # Parse MM:SS.mmm format if needed
+    def parse_lap_time(t: any) -> float:
+        if isinstance(t, (int, float)):
+            return float(t)
+        s = str(t).strip()
+        if ":" in s:
+            parts = s.split(":")
+            try:
+                return int(parts[0]) * 60 + float(parts[1])
+            except (ValueError, IndexError):
+                pass
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return 90.0
+
+    driver_lap = parse_lap_time(driver.get("best_lap_time") or driver.get("last_lap_time") or 90.5)
+    target_lap = parse_lap_time(target.get("best_lap_time") or target.get("last_lap_time") or 90.5)
+
+    pace_delta = target_lap - driver_lap  # positive = driver is faster per lap
+
+    # Current on-track gap in seconds
+    try:
+        gap_to_leader_driver = float(driver.get("gap_to_leader") or 0)
+        gap_to_leader_target = float(target.get("gap_to_leader") or 0)
+        gap_seconds = abs(gap_to_leader_driver - gap_to_leader_target)
+    except (ValueError, TypeError):
+        gap_seconds = 3.0
+
+    if gap_seconds < 0.5:
+        gap_seconds = 0.5
+
+    # DRS boost: if within 1 second after catching, add 0.4s pace bonus
+    drs_available = bool(driver.get("drs", 0) and int(driver.get("drs", 0)) > 10)
+    drs_bonus = 0.4 if drs_available else 0.0
+    effective_delta = pace_delta + drs_bonus
+
+    if effective_delta <= 0:
+        laps_to_catch = None
+        assessment = "Pace delta insufficient — overtake unlikely without a strategic intervention."
+    else:
+        laps_to_catch = round(gap_seconds / effective_delta, 1)
+        if laps_to_catch <= 3:
+            assessment = "Imminent — expect an overtake attempt within 2–3 laps."
+        elif laps_to_catch <= 8:
+            assessment = "Close battle ahead — should be in DRS range soon."
+        else:
+            assessment = "Long game — tire delta or a safety car will be needed."
+
+    return {
+        "driver": driver_name,
+        "driver_pos": driver_pos,
+        "target": target_name,
+        "target_pos": target_pos,
+        "gap_seconds": round(gap_seconds, 2),
+        "pace_delta_per_lap": round(effective_delta, 3),
+        "drs_available": drs_available,
+        "laps_to_catch": laps_to_catch,
+        "assessment": assessment,
+    }
+
+
+TIRE_LIFE: Dict[str, int] = {
+    "SOFT": 25,
+    "MEDIUM": 40,
+    "HARD": 55,
+    "INTER": 35,
+    "WET": 40,
+}
+
+TIRE_PACE_OFFSET: Dict[str, float] = {
+    "SOFT": 0.0,
+    "MEDIUM": 0.4,
+    "HARD": 0.8,
+    "INTER": 1.5,
+    "WET": 3.0,
+}
+
+
+def predict_tire_strategy(
+    driver: Dict,
+    laps_remaining: int,
+    weather_temp: float = 30.0,
+) -> Dict:
+    """
+    Recommend a pit-stop window and target compound for the driver,
+    based on current tire age, compound, laps remaining, and track temp.
+    """
+    driver_name = driver.get("name", driver.get("id", "Driver"))
+    compound = (driver.get("tire") or "MEDIUM").upper()
+    tire_age = int(driver.get("tire_age") or 0)
+
+    max_life = TIRE_LIFE.get(compound, 35)
+
+    # Heat degrades tires faster — above 40°C, reduce life by up to 20%
+    temp_factor = 1.0 - max(0, (weather_temp - 40) / 100)
+    adjusted_life = int(max_life * temp_factor)
+
+    laps_left_on_tire = max(0, adjusted_life - tire_age)
+
+    # Decide urgency
+    if laps_left_on_tire == 0:
+        urgency = "CRITICAL"
+        pit_in_laps = 1
+    elif laps_left_on_tire <= 5:
+        urgency = "HIGH"
+        pit_in_laps = laps_left_on_tire
+    elif laps_left_on_tire <= 12:
+        urgency = "MEDIUM"
+        pit_in_laps = laps_left_on_tire
+    else:
+        urgency = "LOW"
+        pit_in_laps = laps_left_on_tire
+
+    # Recommend next compound
+    if laps_remaining <= 15:
+        recommended = "SOFT"
+    elif compound == "SOFT":
+        recommended = "MEDIUM" if laps_remaining > 20 else "SOFT"
+    elif compound == "MEDIUM":
+        recommended = "HARD" if laps_remaining > 30 else "MEDIUM"
+    else:
+        recommended = "MEDIUM" if compound in ("INTER", "WET") else "SOFT"
+
+    next_life = int(TIRE_LIFE.get(recommended, 35) * temp_factor)
+    two_stop = next_life < laps_remaining
+    strategy_label = "2-stop" if two_stop else "1-stop"
+
+    return {
+        "driver": driver_name,
+        "current_compound": compound,
+        "tire_age": tire_age,
+        "laps_remaining": laps_remaining,
+        "laps_left_on_tire": laps_left_on_tire,
+        "pit_in_laps": pit_in_laps,
+        "urgency": urgency,
+        "recommended_compound": recommended,
+        "strategy": strategy_label,
+        "weather_temp": weather_temp,
+    }
