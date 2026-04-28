@@ -16,7 +16,7 @@ import stripe
 load_dotenv()
 
 import livef1_client
-from simulation import predict_ers_impact, predict_pit_stop, predict_yellow_flag_impact
+from simulation import predict_ers_impact, predict_overtake, predict_pit_stop, predict_tire_strategy, predict_yellow_flag_impact
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_dummy")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
@@ -324,6 +324,108 @@ async def get_ers_prediction(
 ):
     """Predict ERS battery impact for the rest of the race."""
     return predict_ers_impact(str(driver_number), ers_level=70, laps_remaining=laps_remaining)
+
+
+@app.get("/api/overtake_simulation")
+async def get_overtake_simulation(
+    driver_number: int,
+    target_number: int,
+    session_id: str = Depends(check_session_unlocked),
+):
+    """Predict how many laps it will take driver_number to catch and pass target_number."""
+    cars = cached_state.get("cars", [])
+    driver = next((c for c in cars if c.get("number") == driver_number), None)
+    target = next((c for c in cars if c.get("number") == target_number), None)
+
+    if not driver:
+        raise HTTPException(status_code=404, detail=f"Driver {driver_number} not found")
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Target driver {target_number} not found")
+
+    result = predict_overtake(driver=driver, target=target, all_cars=cars)
+
+    laps_str = f"{result['laps_to_catch']} laps" if result["laps_to_catch"] is not None else "unlikely this stint"
+    drs_str = "DRS available" if result["drs_available"] else "no DRS"
+    prompt = (
+        f"You are an F1 race engineer. {result['driver']} (P{result['driver_pos']}) is trying to pass "
+        f"{result['target']} (P{result['target_pos']}). The gap is {result['gap_seconds']}s. "
+        f"Pace delta: {result['pace_delta_per_lap']}s/lap ({drs_str}). "
+        f"Estimated time to catch: {laps_str}. Assessment: {result['assessment']} "
+        "Give a dramatic one-sentence radio message to the driver about this overtake opportunity."
+    )
+    try:
+        resp = await groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are a Formula 1 race engineer speaking on the radio."},
+                {"role": "user", "content": prompt},
+            ],
+            model="llama3-8b-8192",
+            temperature=0.8,
+            max_tokens=70,
+        )
+        result["radio_message"] = resp.choices[0].message.content
+    except Exception:
+        result["radio_message"] = (
+            f"Copy {result['driver']}, you're {result['gap_seconds']}s behind — keep pushing, the gap is coming down."
+        )
+
+    return result
+
+
+@app.get("/api/tire_strategy")
+async def get_tire_strategy(
+    driver_number: int,
+    laps_remaining: int = 20,
+    session_id: str = Depends(check_session_unlocked),
+):
+    """Recommend the optimal tire strategy for a driver."""
+    cars = cached_state.get("cars", [])
+    weather = cached_state.get("weather") or {}
+    driver = next((c for c in cars if c.get("number") == driver_number), None)
+
+    if not driver:
+        raise HTTPException(status_code=404, detail=f"Driver {driver_number} not found")
+
+    try:
+        track_temp = float(weather.get("track_temperature") or weather.get("air_temperature") or 30.0)
+    except (ValueError, TypeError):
+        track_temp = 30.0
+
+    result = predict_tire_strategy(driver=driver, laps_remaining=laps_remaining, weather_temp=track_temp)
+
+    urgency_phrase = {
+        "CRITICAL": "tires are GONE — box this lap",
+        "HIGH": f"box within {result['pit_in_laps']} laps",
+        "MEDIUM": f"pit window opens in ~{result['pit_in_laps']} laps",
+        "LOW": f"comfortable — {result['laps_left_on_tire']} laps left on current compound",
+    }.get(result["urgency"], "monitor tire condition")
+
+    prompt = (
+        f"You are an F1 race engineer. {result['driver']} is on {result['tire_age']}-lap-old "
+        f"{result['current_compound']} tires with {laps_remaining} laps remaining. "
+        f"Track temp: {track_temp:.0f}°C. Strategy call: {urgency_phrase}. "
+        f"Recommended next compound: {result['recommended_compound']}. "
+        f"Overall strategy: {result['strategy']}. "
+        "Give a one-sentence radio call to the driver about tire strategy."
+    )
+    try:
+        resp = await groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are a Formula 1 race engineer speaking on the radio."},
+                {"role": "user", "content": prompt},
+            ],
+            model="llama3-8b-8192",
+            temperature=0.7,
+            max_tokens=70,
+        )
+        result["radio_message"] = resp.choices[0].message.content
+    except Exception:
+        result["radio_message"] = (
+            f"Copy {result['driver']}, "
+            f"plan is {result['strategy']} — box for {result['recommended_compound']}s in {result['pit_in_laps']} laps."
+        )
+
+    return result
 
 
 @app.post("/api/webhook/stripe")
