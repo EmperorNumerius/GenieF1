@@ -596,6 +596,92 @@ async def post_strategy_ab(body: StrategyABRequest):
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Historical race browser + championship standings endpoints
+# ---------------------------------------------------------------------------
+
+import historical
+import standings as standings_module
+
+
+@app.get("/api/seasons")
+async def get_seasons():
+    """List all supported F1 seasons."""
+    return {"seasons": historical.list_seasons()}
+
+
+@app.get("/api/seasons/{season}/races")
+async def get_season_races(season: int):
+    """Return the F1 calendar for a given season."""
+    if season not in historical.list_seasons():
+        raise HTTPException(status_code=404, detail=f"Season {season} not found")
+    try:
+        races = historical.list_races(season)
+        return {"season": season, "races": races}
+    except Exception as exc:
+        logger.warning("Error fetching races for %d: %s", season, exc)
+        return {"season": season, "races": []}
+
+
+@app.get("/api/seasons/{season}/races/{round_num}")
+async def get_race_result(season: int, round_num: int):
+    """Return race results for a specific season and round."""
+    if season not in historical.list_seasons():
+        raise HTTPException(status_code=404, detail=f"Season {season} not found")
+    try:
+        result = historical.get_race_results(season, round_num)
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Round {round_num} not found in {season}")
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Error fetching race %d R%d: %s", season, round_num, exc)
+        raise HTTPException(status_code=404, detail=f"Round {round_num} not found in {season}")
+
+
+@app.get("/api/seasons/{season}/standings/drivers")
+async def get_driver_standings(season: int):
+    """Return driver championship standings for the given season."""
+    if season not in historical.list_seasons():
+        raise HTTPException(status_code=404, detail=f"Season {season} not found")
+    try:
+        return standings_module.driver_standings(season)
+    except Exception as exc:
+        logger.warning("Error computing driver standings for %d: %s", season, exc)
+        return []
+
+
+@app.get("/api/seasons/{season}/standings/constructors")
+async def get_constructor_standings(season: int):
+    """Return constructor championship standings for the given season."""
+    if season not in historical.list_seasons():
+        raise HTTPException(status_code=404, detail=f"Season {season} not found")
+    try:
+        return standings_module.constructor_standings(season)
+    except Exception as exc:
+        logger.warning("Error computing constructor standings for %d: %s", season, exc)
+        return []
+
+
+@app.get("/api/head_to_head")
+async def get_head_to_head(driver_a: str = "VER", driver_b: str = "HAM", season: int = 2024):
+    """Compare two drivers head-to-head across a full season."""
+    if season not in historical.list_seasons():
+        raise HTTPException(status_code=404, detail=f"Season {season} not found")
+    try:
+        return historical.head_to_head(driver_a, driver_b, season)
+    except Exception as exc:
+        logger.warning("Error computing head_to_head %s vs %s %d: %s", driver_a, driver_b, season, exc)
+        return {
+            "driver_a": driver_a.upper(),
+            "driver_b": driver_b.upper(),
+            "season": season,
+            "races": [],
+            "summary": {"a_wins": 0, "b_wins": 0, "a_avg_pos": 0.0, "b_avg_pos": 0.0},
+        }
+
 if __name__ == "__main__":
     import uvicorn
 
