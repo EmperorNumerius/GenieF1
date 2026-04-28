@@ -82,7 +82,7 @@ export function SidebarStandings({
                   className="w-9 h-9 rounded-lg shrink-0 overflow-hidden border-2"
                   style={{ borderColor: teamColor }}
                 >
-                  <img src={avatarUrl} alt={car.id} className="w-full h-full object-cover" />
+                  <img src={avatarUrl} alt={`Driver ${car.id}`} className="w-full h-full object-cover" />
                 </div>
 
                 <div className="flex-1 min-w-0">
