@@ -10,10 +10,14 @@ venv/
 node_modules/
 .next/
 dist/
+out/
 
 # Logs (CRITICAL — bot.log, livef1.log, backend.log keep getting committed)
 *.log
 logs/
+backend.log
+bot.log
+livef1.log
 
 # Env files
 .env

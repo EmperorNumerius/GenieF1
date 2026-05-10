@@ -1,13 +1,3 @@
-/**
- * Central API base resolution.
- *
- * Production: NEXT_PUBLIC_API_BASE is baked in at build time
- *   (e.g. https://f1-api.numeri.us)
- * Dev:        falls back to http://localhost:8000
- *
- * WS_BASE derives the websocket URL from API_BASE so https → wss automatically.
- */
-
 export const API_BASE: string =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, '') || 'http://localhost:8000';
 
@@ -21,4 +11,16 @@ export function apiUrl(path: string): string {
 export function wsUrl(path: string): string {
   if (path.startsWith('ws')) return path;
   return `${WS_BASE}${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
+export async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const url = apiUrl(path);
+  const response = await fetch(url, options);
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    throw new Error(`API call failed: ${response.status} ${response.statusText} - ${errorBody}`);
+  }
+
+  return response.json() as Promise<T>;
 }

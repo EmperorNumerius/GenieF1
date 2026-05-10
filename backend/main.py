@@ -1,439 +1,250 @@
 import asyncio
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
-from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from groq import AsyncGroq
-from pydantic import BaseModel
 import stripe
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from pydantic_settings import BaseSettings
 
-# Load environment before importing modules that read env at import time.
-load_dotenv()
-
-import livef1_client
-from simulation import predict_ers_impact, predict_overtake, predict_pit_stop, predict_tire_strategy, predict_yellow_flag_impact
-
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_dummy")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "dummy_groq_key")
-groq_client = AsyncGroq(api_key=GROQ_API_KEY)
-
-# Parse ALLOWED_ORIGINS from environment, defaulting to standard local dev ports
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
-allowed_origins_list = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
+from livef1_client import live_manager, data_store, RaceState, CarState
 
 logger = logging.getLogger(__name__)
 
-# In-memory
-unlocked_sessions = set()
-cached_state: Dict[str, Any] = {
-    "cars": [],
-    "session": None,
-    "weather": None,
-    "race_control": [],
-    "updated_at": None,
-    "error": "Booting GenieF1 telemetry service...",
-}
+class Settings(BaseSettings):
+    allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    environment: str = "development"
+    stripe_secret_key: str = "sk_test_dummy"
+    stripe_webhook_secret: str = "whsec_dummy"
 
-# LiveF1 data store — populated by the SignalR background thread
-data_store = livef1_client.LiveF1DataStore()
-_livef1_thread = None
+    class Config:
+        env_file = ".env"
 
+settings = Settings()
+stripe.api_key = settings.stripe_secret_key
 
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-async def refresh_cached_state() -> None:
-    """Read from the LiveF1 data store and update the global cached_state."""
-    global cached_state
-
-    state = livef1_client.get_full_race_state(data_store)
-    session_info = livef1_client.get_session_info(data_store)
-
-    snap = data_store.snapshot()
-    state["session"] = session_info
-    state["api_status"] = livef1_client.get_api_status(data_store)
-    state["stale"] = bool(state.get("error"))
-    state["track_outline"] = snap.get("track_outline", [])
-    state["position_trails"] = snap.get("position_history", {})
-
-    # Mark if showing historical data
-    if livef1_client.is_historical_mode():
-        state["historical"] = True
-        state.pop("error", None)
-
-    cached_state = state
-
-
-async def state_refresh_loop() -> None:
-    """Background loop that refreshes cached_state from the data store."""
-    # Give the livef1 client a moment to connect
-    await asyncio.sleep(3)
-
-    # If no live data after initial wait, load the last completed session
-    snap = data_store.snapshot()
-    if not snap["drivers"] and not snap["car_data"]:
-        logger.info("No live session detected — loading most recent historical session...")
-        await asyncio.get_event_loop().run_in_executor(
-            None, livef1_client.load_latest_historical_session, data_store
-        )
-
-    while True:
-        try:
-            await refresh_cached_state()
-        except Exception as exc:
-            logger.warning("Error refreshing state: %s", exc)
-
-        # Refresh every 2 seconds to keep the WebSocket feed fresh
-        await asyncio.sleep(2)
-
+# In-memory store for unlocked sessions
+unlocked_sessions: set[str] = set()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _livef1_thread
-
-    # Start the livef1 SignalR client in a daemon thread
-    _livef1_thread = livef1_client.start_livef1_thread(data_store)
-
-    # Start the state refresh loop
-    refresh_task = asyncio.create_task(state_refresh_loop())
-
+    # Startup
+    logger.info("Starting LiveF1 Connection Manager...")
+    await live_manager.start()
     yield
+    # Shutdown
+    logger.info("Shutting down LiveF1 Connection Manager...")
+    await live_manager.stop()
 
-    # Cleanup
-    refresh_task.cancel()
-    logger.info("GenieF1 shutting down.")
+app = FastAPI(title="GenieF1 Backend", lifespan=lifespan)
 
-
-app = FastAPI(title="GenieF1 - Live Race Engineer Dashboard", lifespan=lifespan)
+origins = [origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins_list,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-@app.websocket("/ws/race_data")
-async def websocket_race_data(websocket: WebSocket):
-    """Stream live race data to the frontend."""
-    await websocket.accept()
-    try:
-        while True:
-            await websocket.send_json(cached_state)
-            await asyncio.sleep(2)
-    except WebSocketDisconnect:
-        pass
-
-
-@app.get("/api/race_state")
-async def get_race_state():
-    """Get current race state as a one-shot snapshot."""
-    return cached_state
-
-
-@app.get("/api/telemetry")
-async def get_telemetry(driver: Optional[str] = None, driver_number: Optional[int] = None):
-    """Backward-compatible telemetry endpoint with optional driver filter."""
-    if not driver and driver_number is None:
-        return cached_state
-
-    cars = cached_state.get("cars", [])
-    selected = None
-
-    if driver_number is not None:
-        for car in cars:
-            if car.get("number") == driver_number:
-                selected = car
-                break
-
-    if selected is None and driver:
-        needle = driver.strip().casefold()
-        for car in cars:
-            if (
-                needle == str(car.get("id", "")).casefold()
-                or needle in str(car.get("name", "")).casefold()
-            ):
-                selected = car
-                break
-
-    if selected is None:
-        raise HTTPException(status_code=404, detail="Driver not found")
-
-    return {
-        "session": cached_state.get("session"),
-        "updated_at": cached_state.get("updated_at"),
-        "car": selected,
-        "error": cached_state.get("error"),
-    }
-
-
-@app.get("/api/session")
-async def get_session():
-    """Get resolved session info and API status."""
-    return {
-        "session": cached_state.get("session"),
-        "api_status": livef1_client.get_api_status(data_store),
-        "error": cached_state.get("error"),
-    }
-
-
-@app.get("/api/status")
-async def get_status():
-    """Service health/status endpoint for debugging."""
-    api_status = livef1_client.get_api_status(data_store)
-    return {
-        "api_status": api_status,
-        "cached_state_updated_at": cached_state.get("updated_at"),
-        "cached_state_error": cached_state.get("error"),
-        "car_count": len(cached_state.get("cars", [])),
-        "data_source": "livef1 (SignalR)",
-    }
-
-
-@app.post("/api/session/refresh")
-async def refresh_now():
-    """Force an immediate state refresh from the data store."""
-    await refresh_cached_state()
-    return {
-        "ok": bool(cached_state.get("cars")),
-        "session": cached_state.get("session"),
-        "error": cached_state.get("error"),
-        "api_status": livef1_client.get_api_status(data_store),
-    }
-
-
-@app.get("/api/calendar")
-async def get_calendar(year: int = 2026):
-    """Get all race meetings for a given year."""
-    meetings = livef1_client.get_meetings_for_year(year)
-    if not meetings:
-        meetings = livef1_client.get_meetings_for_year(year - 1)
-    return {"year": year, "meetings": meetings or []}
-
-
-def check_session_unlocked(session_id: Optional[str] = Header(None)):
+def verify_session(request: Request) -> str:
+    session_id = request.headers.get("session-id")
     if not session_id or session_id not in unlocked_sessions:
-        raise HTTPException(status_code=403, detail="AI insights locked. Please unlock.")
+        raise HTTPException(status_code=403, detail="Session not unlocked or invalid")
     return session_id
 
+from fastapi import WebSocket, WebSocketDisconnect
 
-@app.get("/api/insights")
-async def get_ai_insights(session_id: str = Depends(check_session_unlocked)):
-    """AI race engineer insight based on live data."""
-    cars = cached_state.get("cars", [])
-    session_info = cached_state.get("session", {})
+class StatusResponse(BaseModel):
+    status: str
+    is_connected: bool
+    last_update: str
+    cars_tracked: int
 
-    if not cars:
-        return {"insight": "No live data available for analysis."}
+@app.get("/api/status", response_model=StatusResponse)
+async def get_status():
+    async with data_store.lock:
+        return StatusResponse(
+            status="ok",
+            is_connected=data_store.is_connected,
+            last_update=data_store.last_update.isoformat(),
+            cars_tracked=len(data_store.cars_dict)
+        )
 
-    leader = cars[0] if cars else {}
-    prompt = (
-        f"You are an F1 race engineer. The current session is {session_info.get('meeting_name', 'unknown')} "
-        f"({session_info.get('type', 'Race')}). "
-        f"The leader is {leader.get('name', 'unknown')} (P1) on {leader.get('tire', 'unknown')} tires. "
-        "Provide ONE concise, dramatic broadcast-style insight about the current race situation."
+@app.get("/api/race_state", response_model=RaceState)
+async def get_race_state():
+    return await data_store.get_state()
+
+@app.get("/api/telemetry", response_model=CarState)
+async def get_telemetry(driver_number: str):
+    async with data_store.lock:
+        if driver_number not in data_store.cars_dict:
+            raise HTTPException(status_code=404, detail="Driver not found")
+        return data_store.cars_dict[driver_number]
+
+class SessionResponse(BaseModel):
+    session_name: str
+    session_type: str
+    livef1_connected: bool
+
+@app.get("/api/session", response_model=SessionResponse)
+async def get_session():
+    state = await data_store.get_state()
+    async with data_store.lock:
+        return SessionResponse(
+            session_name=state.session_name,
+            session_type=state.session_type,
+            livef1_connected=data_store.is_connected
+        )
+
+class RefreshResponse(BaseModel):
+    status: str
+
+@app.post("/api/session/refresh", response_model=RefreshResponse)
+async def post_refresh():
+    await live_manager.stop()
+    await asyncio.sleep(0.5)
+    await live_manager.start()
+    return RefreshResponse(status="reconnecting")
+
+from simulation import (
+    PitProjectionResult, YellowFlagResult, ERSPredictionResult,
+    OvertakeSimulationResult, TireStrategyResult,
+    predict_pit_stop, predict_yellow_flag_impact, predict_ers_impact,
+    predict_overtake, predict_tire_strategy
+)
+from monte_carlo import simulate_race_outcomes, MonteCarloResult
+from race_engineer import race_engineer_response, RaceEngineerResponse
+
+class CalendarResponse(BaseModel):
+    year: int
+    races: list[str] = ["Bahrain", "Saudi Arabia", "Australia", "Japan", "China", "Miami", "Emilia Romagna", "Monaco", "Canada", "Spain", "Austria", "Great Britain", "Hungary", "Belgium", "Netherlands", "Italy", "Azerbaijan", "Singapore", "United States", "Mexico City", "São Paulo", "Las Vegas", "Qatar", "Abu Dhabi"]
+
+@app.get("/api/calendar", response_model=CalendarResponse)
+async def get_calendar(year: int = 2026):
+    return CalendarResponse(year=year)
+
+@app.get("/api/insights", response_model=RaceEngineerResponse)
+async def get_insights(session_id: str = Depends(verify_session)):
+    state = await data_store.get_state()
+    # Mocking a dynamic question for the background polling
+    return await race_engineer_response(
+        question="Give me a quick tactical overview of the current race situation.",
+        race_state=state
     )
 
-    try:
-        resp = await groq_client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a professional Formula 1 race commentator and engineer.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            model="llama3-8b-8192",
-            temperature=0.7,
-            max_tokens=80,
-        )
-        return {"insight": resp.choices[0].message.content}
-    except Exception as exc:
-        logger.error("Groq error: %s", exc)
-        return {
-            "insight": f"{leader.get('name', 'The leader')} is setting a blistering pace, but tire degradation is starting to bite."
-        }
-
-
-@app.get("/api/pit_projection")
-async def get_pit_projection(driver_number: int, session_id: str = Depends(check_session_unlocked)):
-    """Predict where a driver will re-enter after a pit stop."""
-    cars = cached_state.get("cars", [])
-    target = None
-    for car in cars:
-        if car.get("number") == driver_number:
-            target = car
-            break
-
+@app.get("/api/pit_projection", response_model=PitProjectionResult)
+async def get_pit_projection(driver_number: str):
+    state = await data_store.get_state()
+    target = next((c for c in state.cars if c.number == driver_number), None)
     if not target:
-        return {"error": "Driver not found"}
+        raise HTTPException(status_code=404, detail="Driver not found")
 
-    result = predict_pit_stop(
-        driver_pos=target.get("pos", 1),
-        driver_interval=None,
-        all_cars=cars,
-    )
+    interval = None
+    if target.interval:
+        try:
+            interval = float(target.interval.replace("+", "").replace("s", ""))
+        except ValueError:
+            pass
 
-    prompt = (
-        f"You are an F1 race engineer. {target.get('name')} is currently P{target.get('pos')}. "
-        f"If they pit now, they'll lose ~22 seconds and rejoin in P{result['predicted_position']}. "
-        "Give a one-sentence radio message to the driver about this strategy call."
-    )
+    return predict_pit_stop(target.pos, interval, state.cars)
 
-    try:
-        resp = await groq_client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a Formula 1 race engineer speaking to your driver on the radio.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            model="llama3-8b-8192",
-            temperature=0.7,
-            max_tokens=60,
-        )
-        result["insight"] = resp.choices[0].message.content
-    except Exception:
-        result["insight"] = f"Copy {target.get('name', 'driver')}, box now for P{result['predicted_position']} rejoin."
+@app.get("/api/yellow_flag_analysis", response_model=YellowFlagResult)
+async def get_yellow_flag_analysis():
+    state = await data_store.get_state()
+    return predict_yellow_flag_impact(state.cars)
 
-    return result
-
-
-@app.get("/api/yellow_flag_analysis")
-async def get_yellow_flag_analysis(session_id: str = Depends(check_session_unlocked)):
-    """Predict what would happen if a yellow flag/safety car is thrown."""
-    cars = cached_state.get("cars", [])
-    return predict_yellow_flag_impact(cars)
-
-
-@app.get("/api/ers_prediction")
-async def get_ers_prediction(
-    driver_number: int,
-    laps_remaining: int = 20,
-    session_id: str = Depends(check_session_unlocked),
-):
-    """Predict ERS battery impact for the rest of the race."""
-    return predict_ers_impact(str(driver_number), ers_level=70, laps_remaining=laps_remaining)
-
-
-@app.get("/api/overtake_simulation")
-async def get_overtake_simulation(
-    driver_number: int,
-    target_number: int,
-    session_id: str = Depends(check_session_unlocked),
-):
-    """Predict how many laps it will take driver_number to catch and pass target_number."""
-    cars = cached_state.get("cars", [])
-    driver = next((c for c in cars if c.get("number") == driver_number), None)
-    target = next((c for c in cars if c.get("number") == target_number), None)
-
-    if not driver:
-        raise HTTPException(status_code=404, detail=f"Driver {driver_number} not found")
+@app.get("/api/ers_prediction", response_model=ERSPredictionResult)
+async def get_ers_prediction(driver_number: str, laps_remaining: int):
+    # Mocking ERS level since we don't have it directly from basic LiveF1
+    state = await data_store.get_state()
+    target = next((c for c in state.cars if c.number == driver_number), None)
     if not target:
-        raise HTTPException(status_code=404, detail=f"Target driver {target_number} not found")
+        raise HTTPException(status_code=404, detail="Driver not found")
 
-    result = predict_overtake(driver=driver, target=target, all_cars=cars)
+    ers_level = 50 # Default mock
+    return predict_ers_impact(driver_number, ers_level, laps_remaining)
 
-    laps_str = f"{result['laps_to_catch']} laps" if result["laps_to_catch"] is not None else "unlikely this stint"
-    drs_str = "DRS available" if result["drs_available"] else "no DRS"
-    prompt = (
-        f"You are an F1 race engineer. {result['driver']} (P{result['driver_pos']}) is trying to pass "
-        f"{result['target']} (P{result['target_pos']}). The gap is {result['gap_seconds']}s. "
-        f"Pace delta: {result['pace_delta_per_lap']}s/lap ({drs_str}). "
-        f"Estimated time to catch: {laps_str}. Assessment: {result['assessment']} "
-        "Give a dramatic one-sentence radio message to the driver about this overtake opportunity."
-    )
-    try:
-        resp = await groq_client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a Formula 1 race engineer speaking on the radio."},
-                {"role": "user", "content": prompt},
-            ],
-            model="llama3-8b-8192",
-            temperature=0.8,
-            max_tokens=70,
-        )
-        result["radio_message"] = resp.choices[0].message.content
-    except Exception:
-        result["radio_message"] = (
-            f"Copy {result['driver']}, you're {result['gap_seconds']}s behind — keep pushing, the gap is coming down."
-        )
+@app.get("/api/overtake_simulation", response_model=OvertakeSimulationResult)
+async def get_overtake_simulation(driver_number: str, target_number: str):
+    state = await data_store.get_state()
+    driver = next((c for c in state.cars if c.number == driver_number), None)
+    target = next((c for c in state.cars if c.number == target_number), None)
 
-    return result
+    if not driver or not target:
+        raise HTTPException(status_code=404, detail="Driver or target not found")
 
+    return predict_overtake(driver, target, state.cars)
 
-@app.get("/api/tire_strategy")
-async def get_tire_strategy(
-    driver_number: int,
-    laps_remaining: int = 20,
-    session_id: str = Depends(check_session_unlocked),
-):
-    """Recommend the optimal tire strategy for a driver."""
-    cars = cached_state.get("cars", [])
-    weather = cached_state.get("weather") or {}
-    driver = next((c for c in cars if c.get("number") == driver_number), None)
-
+@app.get("/api/tire_strategy", response_model=TireStrategyResult)
+async def get_tire_strategy(driver_number: str, laps_remaining: int):
+    state = await data_store.get_state()
+    driver = next((c for c in state.cars if c.number == driver_number), None)
     if not driver:
-        raise HTTPException(status_code=404, detail=f"Driver {driver_number} not found")
+        raise HTTPException(status_code=404, detail="Driver not found")
 
+    weather_temp = state.weather.get("track_temp", 30.0)
+    return predict_tire_strategy(driver, laps_remaining, float(weather_temp))
+
+@app.get("/api/monte_carlo", response_model=MonteCarloResult)
+async def get_monte_carlo(simulations: int = 1000):
+    state = await data_store.get_state()
+    return simulate_race_outcomes(state, simulations)
+
+
+class StripeSessionCreate(BaseModel):
+    success_url: str
+    cancel_url: str
+
+class StripeSessionResponse(BaseModel):
+    url: str
+
+@app.post("/api/create_checkout", response_model=StripeSessionResponse)
+async def create_checkout_session(body: StripeSessionCreate):
     try:
-        track_temp = float(weather.get("track_temperature") or weather.get("air_temperature") or 30.0)
-    except (ValueError, TypeError):
-        track_temp = 30.0
-
-    result = predict_tire_strategy(driver=driver, laps_remaining=laps_remaining, weather_temp=track_temp)
-
-    urgency_phrase = {
-        "CRITICAL": "tires are GONE — box this lap",
-        "HIGH": f"box within {result['pit_in_laps']} laps",
-        "MEDIUM": f"pit window opens in ~{result['pit_in_laps']} laps",
-        "LOW": f"comfortable — {result['laps_left_on_tire']} laps left on current compound",
-    }.get(result["urgency"], "monitor tire condition")
-
-    prompt = (
-        f"You are an F1 race engineer. {result['driver']} is on {result['tire_age']}-lap-old "
-        f"{result['current_compound']} tires with {laps_remaining} laps remaining. "
-        f"Track temp: {track_temp:.0f}°C. Strategy call: {urgency_phrase}. "
-        f"Recommended next compound: {result['recommended_compound']}. "
-        f"Overall strategy: {result['strategy']}. "
-        "Give a one-sentence radio call to the driver about tire strategy."
-    )
-    try:
-        resp = await groq_client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a Formula 1 race engineer speaking on the radio."},
-                {"role": "user", "content": prompt},
-            ],
-            model="llama3-8b-8192",
-            temperature=0.7,
-            max_tokens=70,
+        session_id = str(uuid.uuid4())
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'usd',
+                    'unit_amount': 500,
+                    'product_data': {
+                        'name': 'GenieF1 Pro Session Unlock',
+                        'description': 'Unlock AI Race Engineer and advanced simulations for the current session.',
+                    },
+                },
+                'quantity': 1,
+            }],
+            mode='payment',
+            success_url=f"{body.success_url}?session_id={session_id}",
+            cancel_url=body.cancel_url,
+            client_reference_id=session_id,
         )
-        result["radio_message"] = resp.choices[0].message.content
-    except Exception:
-        result["radio_message"] = (
-            f"Copy {result['driver']}, "
-            f"plan is {result['strategy']} — box for {result['recommended_compound']}s in {result['pit_in_laps']} laps."
-        )
+        return StripeSessionResponse(url=checkout_session.url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    return result
+class WebhookResponse(BaseModel):
+    status: str
 
-
-@app.post("/api/webhook/stripe")
+@app.post("/api/webhook/stripe", response_model=WebhookResponse)
 async def stripe_webhook(request: Request):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
+
+    if not sig_header:
+        raise HTTPException(status_code=400, detail="Missing signature")
+
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, settings.stripe_webhook_secret
+        )
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid payload")
     except stripe.error.SignatureVerificationError:
@@ -444,247 +255,55 @@ async def stripe_webhook(request: Request):
         if sid:
             unlocked_sessions.add(sid)
 
-    return {"status": "success"}
+    return WebhookResponse(status="success")
 
+class UnlockDevResponse(BaseModel):
+    status: str
 
-@app.post("/api/unlock_dev")
+@app.post("/api/unlock_dev", response_model=UnlockDevResponse)
 async def unlock_session_dev(session_id: str):
-    # Security: Prevent authorization bypass in production
-    if os.getenv("ENVIRONMENT", "").lower() == "production":
+    if settings.environment.lower() == "production":
         raise HTTPException(status_code=403, detail="Not available in production")
     unlocked_sessions.add(session_id)
-    return {"status": f"Unlocked session {session_id}"}
+    return UnlockDevResponse(status=f"Unlocked session {session_id}")
 
+class HistoricalSessionsResponse(BaseModel):
+    sessions: list[dict[str, Any]]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# AI Brain endpoints — race engineer, Monte Carlo, anomaly detector, A/B strategy
-# ──────────────────────────────────────────────────────────────────────────────
+@app.get("/api/historical/sessions", response_model=HistoricalSessionsResponse)
+async def get_historical_sessions(year: int, round: int):
+    # Mock data for demonstration purposes
+    return HistoricalSessionsResponse(sessions=[
+        {"id": "session1", "name": "Practice 1", "date": "2026-03-20T10:00:00Z"},
+        {"id": "session2", "name": "Qualifying", "date": "2026-03-21T14:00:00Z"},
+        {"id": "session3", "name": "Race", "date": "2026-03-22T15:00:00Z"},
+    ])
 
-from race_engineer import race_engineer_response
-from monte_carlo import simulate_race_outcomes
-from anomaly import detect_anomalies
+class HistoricalLapsResponse(BaseModel):
+    laps: list[dict[str, Any]]
 
+@app.get("/api/historical/laps", response_model=HistoricalLapsResponse)
+async def get_historical_laps(year: int, round: int, session: str, driver: str):
+    # Mock data for demonstration purposes
+    return HistoricalLapsResponse(laps=[
+        {"lap": 1, "time": 95.5, "compound": "SOFT"},
+        {"lap": 2, "time": 93.2, "compound": "SOFT"},
+        {"lap": 3, "time": 94.1, "compound": "SOFT"},
+    ])
 
-class RaceEngineerRequest(BaseModel):
-    question: str
-    driver_id: Optional[str] = None
-
-
-class StrategySpec(BaseModel):
-    pit_lap: int
-    tire: str  # SOFT | MEDIUM | HARD
-
-
-class StrategyABRequest(BaseModel):
-    strategy_a: StrategySpec
-    strategy_b: StrategySpec
-    driver_id: str
-
-
-@app.post("/api/race_engineer")
-async def post_race_engineer(body: RaceEngineerRequest):
-    """Ask the AI race engineer a tactical question in the context of the live race."""
-    if not cached_state.get("cars"):
-        return {"response": "No live race data available — unable to provide tactical analysis."}
-    result = await race_engineer_response(
-        question=body.question,
-        race_state=cached_state,
-        driver_id=body.driver_id,
-    )
-    return {"response": result["response"]}
-
-
-@app.get("/api/monte_carlo")
-async def get_monte_carlo(simulations: int = 1000):
-    """Run Monte Carlo race outcome simulation for the current race state."""
-    if not cached_state.get("cars"):
-        return {"laps_simulated": 0, "simulations": simulations, "predictions": []}
-    return simulate_race_outcomes(race_state=cached_state, n_simulations=simulations)
-
-
-@app.get("/api/anomalies")
-async def get_anomalies():
-    """Detect telemetry and tactical anomalies for all cars in the current race state."""
-    if not cached_state.get("cars"):
-        return []
-    return detect_anomalies(race_state=cached_state)
-
-
-@app.post("/api/strategy_ab")
-async def post_strategy_ab(body: StrategyABRequest):
-    """
-    A/B compare two pit strategies for a given driver via Monte Carlo simulation.
-    Applies each strategy to the current race state and returns win probability
-    and average finishing position for each.
-    """
-    import copy
-
-    cars = cached_state.get("cars", [])
-    if not cars:
-        return {
-            "a_win": 0.0,
-            "b_win": 0.0,
-            "a_avg_pos": 0.0,
-            "b_avg_pos": 0.0,
-            "winner": "TIE",
-        }
-
-    def _apply_strategy(state: dict, driver_id: str, pit_lap: int, tire: str) -> dict:
-        """Return a deep copy of state with the strategy applied to the target driver."""
-        patched = copy.deepcopy(state)
-        needle = str(driver_id).strip().casefold()
-        for car in patched.get("cars", []):
-            if (
-                needle == str(car.get("id", "")).casefold()
-                or needle == str(car.get("number", "")).casefold()
-                or needle in str(car.get("name", "")).casefold()
-            ):
-                # Simulate: driver will pit at pit_lap → reset tire_age to 0 and set compound
-                car["tire"] = tire.upper()
-                car["tire_age"] = max(0, int(car.get("tire_age", 0)) - pit_lap)
-                break
-        return patched
-
-    n_sims = 500  # lighter run for A/B comparison
-
-    state_a = _apply_strategy(
-        cached_state, body.driver_id, body.strategy_a.pit_lap, body.strategy_a.tire
-    )
-    state_b = _apply_strategy(
-        cached_state, body.driver_id, body.strategy_b.pit_lap, body.strategy_b.tire
-    )
-
-    result_a = simulate_race_outcomes(race_state=state_a, n_simulations=n_sims)
-    result_b = simulate_race_outcomes(race_state=state_b, n_simulations=n_sims)
-
-    driver_needle = str(body.driver_id).strip().casefold()
-
-    def _find_driver_pred(predictions: list, needle: str) -> dict | None:
-        for p in predictions:
-            if (
-                needle == str(p.get("id", "")).casefold()
-                or needle in str(p.get("name", "")).casefold()
-            ):
-                return p
-        return None
-
-    pred_a = _find_driver_pred(result_a["predictions"], driver_needle)
-    pred_b = _find_driver_pred(result_b["predictions"], driver_needle)
-
-    a_win = pred_a["win_probability"] if pred_a else 0.0
-    b_win = pred_b["win_probability"] if pred_b else 0.0
-    a_avg = pred_a["expected_position"] if pred_a else 0.0
-    b_avg = pred_b["expected_position"] if pred_b else 0.0
-
-    if a_win > b_win:
-        winner = "A"
-    elif b_win > a_win:
-        winner = "B"
-    elif a_avg < b_avg:  # lower position = better
-        winner = "A"
-    elif b_avg < a_avg:
-        winner = "B"
-    else:
-        winner = "TIE"
-
-    return {
-        "a_win": round(a_win, 4),
-        "b_win": round(b_win, 4),
-        "a_avg_pos": round(a_avg, 2),
-        "b_avg_pos": round(b_avg, 2),
-        "winner": winner,
-    }
-
-
-
-# ---------------------------------------------------------------------------
-# Historical race browser + championship standings endpoints
-# ---------------------------------------------------------------------------
-
-import historical
-import standings as standings_module
-
-
-@app.get("/api/seasons")
-async def get_seasons():
-    """List all supported F1 seasons."""
-    return {"seasons": historical.list_seasons()}
-
-
-@app.get("/api/seasons/{season}/races")
-async def get_season_races(season: int):
-    """Return the F1 calendar for a given season."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
+@app.websocket("/ws/race_data")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
     try:
-        races = historical.list_races(season)
-        return {"season": season, "races": races}
-    except Exception as exc:
-        logger.warning("Error fetching races for %d: %s", season, exc)
-        return {"season": season, "races": []}
-
-
-@app.get("/api/seasons/{season}/races/{round_num}")
-async def get_race_result(season: int, round_num: int):
-    """Return race results for a specific season and round."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
-    try:
-        result = historical.get_race_results(season, round_num)
-        if not result:
-            raise HTTPException(status_code=404, detail=f"Round {round_num} not found in {season}")
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.warning("Error fetching race %d R%d: %s", season, round_num, exc)
-        raise HTTPException(status_code=404, detail=f"Round {round_num} not found in {season}")
-
-
-@app.get("/api/seasons/{season}/standings/drivers")
-async def get_driver_standings(season: int):
-    """Return driver championship standings for the given season."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
-    try:
-        return standings_module.driver_standings(season)
-    except Exception as exc:
-        logger.warning("Error computing driver standings for %d: %s", season, exc)
-        return []
-
-
-@app.get("/api/seasons/{season}/standings/constructors")
-async def get_constructor_standings(season: int):
-    """Return constructor championship standings for the given season."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
-    try:
-        return standings_module.constructor_standings(season)
-    except Exception as exc:
-        logger.warning("Error computing constructor standings for %d: %s", season, exc)
-        return []
-
-
-@app.get("/api/head_to_head")
-async def get_head_to_head(driver_a: str = "VER", driver_b: str = "HAM", season: int = 2024):
-    """Compare two drivers head-to-head across a full season."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
-    try:
-        return historical.head_to_head(driver_a, driver_b, season)
-    except Exception as exc:
-        logger.warning("Error computing head_to_head %s vs %s %d: %s", driver_a, driver_b, season, exc)
-        return {
-            "driver_a": driver_a.upper(),
-            "driver_b": driver_b.upper(),
-            "season": season,
-            "races": [],
-            "summary": {"a_wins": 0, "b_wins": 0, "a_avg_pos": 0.0, "b_avg_pos": 0.0},
-        }
-
-if __name__ == "__main__":
-    import uvicorn
-
-    import os
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+        while True:
+            state = await data_store.get_state()
+            await websocket.send_text(state.model_dump_json())
+            await asyncio.sleep(2.0)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
