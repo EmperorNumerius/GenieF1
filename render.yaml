@@ -1,17 +1,12 @@
-# Render.com blueprint for GenieF1 backend.
+# Render.com blueprint for GenieF1
 #
 # To deploy:
-#   1. Push this repo to GitHub (already done — EmperorNumerius/GenieF1)
+#   1. Push this repo to GitHub
 #   2. Go to https://dashboard.render.com/blueprints
 #   3. Click "New Blueprint Instance" and connect this repo
-#   4. Render will read this file and create the service
-#   5. Add environment variables in the dashboard (GROQ_API_KEY, etc.)
-#   6. Once the service is live, attach a custom domain (f1-api.numeri.us)
+#   4. Render will read this file and create the services
+#   5. Add environment variables in the dashboard
 #
-# Note: free Render Web Services spin down after 15 min of inactivity. The
-# first request after a spin-down takes ~30s to wake the dyno. For always-on
-# behavior, upgrade to the Starter plan (~$7/mo).
-
 services:
   - type: web
     name: genief1-backend
@@ -20,14 +15,12 @@ services:
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
-    healthCheckPath: /api/race_state
+    healthCheckPath: /api/status
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11.0"
+        value: "3.12.0"
       - key: ALLOWED_ORIGINS
         value: "https://f1.numeri.us,http://localhost:3000"
-      # The following must be set manually in the Render dashboard
-      # (Render won't generate values for secrets — `sync: false`).
       - key: GROQ_API_KEY
         sync: false
       - key: STRIPE_SECRET_KEY
@@ -36,3 +29,16 @@ services:
         sync: false
       - key: DISCORD_BOT_TOKEN
         sync: false
+
+  - type: web
+    name: genief1-frontend
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: pnpm install && pnpm build
+    startCommand: pnpm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NEXT_PUBLIC_API_BASE
+        value: "https://genief1-backend.onrender.com"

@@ -1,21 +1,18 @@
 import discord
 from discord.ext import commands, tasks
 import os
-from dotenv import load_dotenv
 import httpx
 import logging
+from dotenv import load_dotenv
 
 load_dotenv()
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("discord_bot")
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
-# Assuming the backend runs locally on port 8000
-API_BASE_URL = "http://127.0.0.1:8000"
-
-# Dictionary to map Discord channel IDs to user session IDs
 linked_channels = {}
 
 intents = discord.Intents.default()
@@ -25,16 +22,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    logging.info(f"Logged in as {bot.user.name}")
+    logger.info(f"Logged in as {bot.user.name}")
     broadcast_insights.start()
 
 @bot.command()
 async def link(ctx, session_id: str):
     """Links this Discord channel to a user's dashboard session."""
-    # Verify with the backend if the session is unlocked
-    # For now, we'll just test if the API returns an insight.
-    # If it's locked, it returns a 403.
-
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
@@ -48,7 +41,7 @@ async def link(ctx, session_id: str):
             else:
                 await ctx.send("❌ Failed to link. This session might not be unlocked via the paywall yet.")
         except Exception as e:
-            logging.error(f"Error communicating with backend: {e}")
+            logger.error(f"Error communicating with backend: {e}")
             await ctx.send("❌ Error communicating with the F1 backend.")
 
 @bot.command()
@@ -66,15 +59,22 @@ async def broadcast_insights():
     if not linked_channels:
         return
 
-    # In a real app, you might only want to fetch once and broadcast to all,
-    # assuming the insights are the same globally, but for a personalized
-    # experience, we fetch per session.
-
     async with httpx.AsyncClient() as client:
+        # Check if the backend has an active session before querying insights
+        try:
+            status_response = await client.get(f"{API_BASE_URL}/api/status")
+            if status_response.status_code == 200:
+                status_data = status_response.json()
+                if not status_data.get("is_connected", False) or status_data.get("cars_tracked", 0) == 0:
+                    # No active session, quietly skip to avoid crashing or spamming errors
+                    return
+        except Exception as e:
+            logger.debug(f"Could not reach backend status endpoint: {e}")
+            return
+
         for channel_id, session_id in list(linked_channels.items()):
             channel = bot.get_channel(channel_id)
             if not channel:
-                # Channel deleted or bot removed from channel
                 del linked_channels[channel_id]
                 continue
 
@@ -86,22 +86,20 @@ async def broadcast_insights():
 
                 if response.status_code == 200:
                     data = response.json()
-                    insight = data.get("insight")
+                    insight = data.get("response")
                     if insight:
-                        # You could add logic here to only broadcast if the insight changed
-                        # from the last broadcast to avoid spamming the channel.
                         await channel.send(f"🏎️ **Live F1 AI Insight**: {insight}")
                 elif response.status_code == 403:
                     await channel.send("🔒 Session is no longer unlocked or expired. Unlinking...")
                     del linked_channels[channel_id]
             except Exception as e:
-                logging.error(f"Error fetching insight for channel {channel_id}: {e}")
+                logger.error(f"Error fetching insight for channel {channel_id}: {e}")
 
 if __name__ == "__main__":
-    if DISCORD_BOT_TOKEN and DISCORD_BOT_TOKEN != "dummy_token":
+    if DISCORD_BOT_TOKEN and DISCORD_BOT_TOKEN != "dummy_token" and DISCORD_BOT_TOKEN != "your_discord_bot_token_here":
         try:
             bot.run(DISCORD_BOT_TOKEN)
         except Exception as e:
-            logging.error(f"Failed to start bot: {e}")
+            logger.error(f"Failed to start bot: {e}")
     else:
-        logging.warning("DISCORD_BOT_TOKEN not set. Bot will not start.")
+        logger.warning("DISCORD_BOT_TOKEN not valid. Bot will not start.")

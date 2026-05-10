@@ -1,136 +1,167 @@
 """
 AI Strategy Engine — Premium features only (behind paywall).
 Handles: pit stop projections, battery/ERS scenarios, yellow flag impact analysis.
-This is NOT the live data source — live data comes from livef1_client.py.
+Uses LiveF1 data store for calculations.
 """
 
-import random
-from typing import Dict, List, Optional
+from typing import Any
+from pydantic import BaseModel
+from livef1_client import CarState, RaceState
+
+class PitProjectionResult(BaseModel):
+    predicted_position: int
+    positions_lost: int
+    pit_loss: float
+
+class YellowFlagResult(BaseModel):
+    beneficiaries: list[dict[str, Any]]
+    losers: list[dict[str, Any]]
+    field_compression: str
+
+class ERSPredictionResult(BaseModel):
+    driver: str
+    ers_level: int
+    laps_remaining: int
+    deploy_per_lap: float
+    outlook: str
+    risk: str
+
+class OvertakeSimulationResult(BaseModel):
+    driver: str
+    driver_pos: int
+    target: str
+    target_pos: int
+    gap_seconds: float
+    pace_delta_per_lap: float
+    drs_available: bool
+    laps_to_catch: float | None
+    assessment: str
+
+class TireStrategyResult(BaseModel):
+    driver: str
+    current_compound: str
+    tire_age: int
+    laps_remaining: int
+    laps_left_on_tire: int
+    pit_in_laps: int
+    urgency: str
+    recommended_compound: str
+    strategy: str
+    weather_temp: float
 
 
 def predict_pit_stop(
     driver_pos: int,
-    driver_interval: Optional[float],
-    all_cars: List[Dict],
+    driver_interval: float | None,
+    all_cars: list[CarState],
     pit_loss_seconds: float = 22.0,
-) -> Dict:
+) -> PitProjectionResult:
     """
-    Given the current race state, predict where a driver would re-enter
-    if they pit right now, accounting for ~22s pit loss.
+    Predict where a driver would re-enter if they pit right now.
     """
-    # Find the driver
     target = None
     for car in all_cars:
-        if car.get("pos") == driver_pos:
+        if car.pos == driver_pos:
             target = car
             break
 
     if not target:
-        return {"predicted_position": driver_pos, "positions_lost": 0}
+        return PitProjectionResult(
+            predicted_position=driver_pos,
+            positions_lost=0,
+            pit_loss=pit_loss_seconds
+        )
 
-    # Estimate: each car behind is ~interval seconds behind.
-    # If we lose pit_loss_seconds, count how many cars would pass us.
     positions_lost = 0
     for car in all_cars:
-        if car.get("pos", 999) > driver_pos:
-            # Car is behind us. Would it end up ahead after our pit?
+        if car.pos > driver_pos:
             try:
-                their_gap = float(car.get("gap_to_leader") or car.get("interval") or 999)
-                our_gap = float(target.get("gap_to_leader") or target.get("interval") or 0)
+                their_gap = float(car.gap_to_leader or car.interval or 999)
+                our_gap = float(target.gap_to_leader or target.interval or 0)
                 if their_gap < our_gap + pit_loss_seconds:
                     positions_lost += 1
             except (ValueError, TypeError):
                 continue
 
-    predicted = driver_pos + positions_lost
-    return {
-        "predicted_position": min(predicted, len(all_cars)),
-        "positions_lost": positions_lost,
-        "pit_loss": pit_loss_seconds,
-    }
+    predicted = min(driver_pos + positions_lost, len(all_cars))
+    return PitProjectionResult(
+        predicted_position=predicted,
+        positions_lost=positions_lost,
+        pit_loss=pit_loss_seconds
+    )
 
 
-def predict_yellow_flag_impact(all_cars: List[Dict]) -> Dict:
+def predict_yellow_flag_impact(all_cars: list[CarState]) -> YellowFlagResult:
     """
     Predict how a safety car / yellow flag would compress the field.
-    Shows who benefits and who loses out.
     """
     beneficiaries = []
     losers = []
 
     for car in all_cars:
-        pos = car.get("pos", 0)
-        tire_age = car.get("tire_age", 0)
-        tire = car.get("tire", "Unknown")
+        pos = car.pos
+        tire_age = car.tire_age
+        tire = car.tire
 
-        # Cars on old tires benefit from a free pit stop under SC
         if tire_age > 15:
             beneficiaries.append({
-                "driver": car.get("id", "???"),
+                "driver": car.id,
                 "reason": f"Free pit stop — {tire} tires are {tire_age} laps old",
                 "pos": pos,
             })
-        # Cars that just pitted lose their advantage
         elif tire_age < 3 and pos > 5:
             losers.append({
-                "driver": car.get("id", "???"),
+                "driver": car.id,
                 "reason": f"Just pitted — fresh {tire} advantage wiped out",
                 "pos": pos,
             })
 
-    return {
-        "beneficiaries": beneficiaries[:5],
-        "losers": losers[:5],
-        "field_compression": "Gaps reset to ~1s between all cars under SC",
-    }
+    return YellowFlagResult(
+        beneficiaries=beneficiaries[:5],
+        losers=losers[:5],
+        field_compression="Gaps reset to ~1s between all cars under SC",
+    )
 
 
-def predict_ers_impact(driver_id: str, ers_level: int, laps_remaining: int) -> Dict:
+def predict_ers_impact(driver_id: str, ers_level: int, laps_remaining: int) -> ERSPredictionResult:
     """
-    Predict how ERS battery reserves will impact the rest of the race.
-    2026 regs: 50/50 ICE/ERS power split — battery management is critical.
+    Predict ERS battery reserves impact (2026 regs 50/50 split).
     """
     if ers_level > 70:
-        outlook = "Strong reserves — can deploy aggressively for overtakes"
+        outlook = "Strong reserves — can deploy aggressively for overtakes (OVR mode)"
         risk = "Low"
     elif ers_level > 40:
         outlook = "Balanced — needs to manage deployment in slow corners"
         risk = "Medium"
     else:
-        outlook = "Critical — will lose significant straight-line speed"
+        outlook = "Critical — will lose significant straight-line speed (50% power drop)"
         risk = "High"
 
-    deploy_per_lap = max(1, ers_level / max(laps_remaining, 1))
+    deploy_per_lap = max(1.0, float(ers_level) / max(laps_remaining, 1))
 
-    return {
-        "driver": driver_id,
-        "ers_level": ers_level,
-        "laps_remaining": laps_remaining,
-        "deploy_per_lap": round(deploy_per_lap, 1),
-        "outlook": outlook,
-        "risk": risk,
-    }
+    return ERSPredictionResult(
+        driver=driver_id,
+        ers_level=ers_level,
+        laps_remaining=laps_remaining,
+        deploy_per_lap=round(deploy_per_lap, 1),
+        outlook=outlook,
+        risk=risk,
+    )
 
 
 def predict_overtake(
-    driver: Dict,
-    target: Dict,
-    all_cars: List[Dict],
-) -> Dict:
+    driver: CarState,
+    target: CarState,
+    all_cars: list[CarState],
+) -> OvertakeSimulationResult:
     """
-    Heuristic estimate of how many laps it would take the given driver
-    to catch and pass the target ahead of them, based on pace delta
-    and DRS availability.
+    Estimate laps to catch and pass target based on pace delta.
     """
-    driver_name = driver.get("name", driver.get("id", "Driver"))
-    target_name = target.get("name", target.get("id", "Target"))
-    driver_pos = driver.get("pos", 99)
-    target_pos = target.get("pos", 98)
-
-    # Parse MM:SS.mmm format if needed
-    def parse_lap_time(t: any) -> float:
+    def parse_lap_time(t: Any) -> float:
         if isinstance(t, (int, float)):
             return float(t)
+        if t is None:
+            return 90.0
         s = str(t).strip()
         if ":" in s:
             parts = s.split(":")
@@ -143,24 +174,22 @@ def predict_overtake(
         except (ValueError, TypeError):
             return 90.0
 
-    driver_lap = parse_lap_time(driver.get("best_lap_time") or driver.get("last_lap_time") or 90.5)
-    target_lap = parse_lap_time(target.get("best_lap_time") or target.get("last_lap_time") or 90.5)
+    driver_lap = parse_lap_time(driver.best_lap_time or driver.last_lap_time or 90.5)
+    target_lap = parse_lap_time(target.best_lap_time or target.last_lap_time or 90.5)
 
-    pace_delta = target_lap - driver_lap  # positive = driver is faster per lap
+    pace_delta = target_lap - driver_lap
 
-    # Current on-track gap in seconds
     try:
-        gap_to_leader_driver = float(driver.get("gap_to_leader") or 0)
-        gap_to_leader_target = float(target.get("gap_to_leader") or 0)
+        gap_to_leader_driver = float(driver.gap_to_leader or 0)
+        gap_to_leader_target = float(target.gap_to_leader or 0)
         gap_seconds = abs(gap_to_leader_driver - gap_to_leader_target)
     except (ValueError, TypeError):
         gap_seconds = 3.0
 
-    if gap_seconds < 0.5:
-        gap_seconds = 0.5
+    gap_seconds = max(0.5, gap_seconds)
 
-    # DRS boost: if within 1 second after catching, add 0.4s pace bonus
-    drs_available = bool(driver.get("drs", 0) and int(driver.get("drs", 0)) > 10)
+    # OVR (Overtake Mode - 2026 regs) available when close
+    drs_available = gap_seconds < 1.0
     drs_bonus = 0.4 if drs_available else 0.0
     effective_delta = pace_delta + drs_bonus
 
@@ -172,24 +201,24 @@ def predict_overtake(
         if laps_to_catch <= 3:
             assessment = "Imminent — expect an overtake attempt within 2–3 laps."
         elif laps_to_catch <= 8:
-            assessment = "Close battle ahead — should be in DRS range soon."
+            assessment = "Close battle ahead — should be in OVR range soon."
         else:
             assessment = "Long game — tire delta or a safety car will be needed."
 
-    return {
-        "driver": driver_name,
-        "driver_pos": driver_pos,
-        "target": target_name,
-        "target_pos": target_pos,
-        "gap_seconds": round(gap_seconds, 2),
-        "pace_delta_per_lap": round(effective_delta, 3),
-        "drs_available": drs_available,
-        "laps_to_catch": laps_to_catch,
-        "assessment": assessment,
-    }
+    return OvertakeSimulationResult(
+        driver=driver.name or driver.id,
+        driver_pos=driver.pos,
+        target=target.name or target.id,
+        target_pos=target.pos,
+        gap_seconds=round(gap_seconds, 2),
+        pace_delta_per_lap=round(effective_delta, 3),
+        drs_available=drs_available,
+        laps_to_catch=laps_to_catch,
+        assessment=assessment,
+    )
 
 
-TIRE_LIFE: Dict[str, int] = {
+TIRE_LIFE: dict[str, int] = {
     "SOFT": 25,
     "MEDIUM": 40,
     "HARD": 55,
@@ -197,37 +226,24 @@ TIRE_LIFE: Dict[str, int] = {
     "WET": 40,
 }
 
-TIRE_PACE_OFFSET: Dict[str, float] = {
-    "SOFT": 0.0,
-    "MEDIUM": 0.4,
-    "HARD": 0.8,
-    "INTER": 1.5,
-    "WET": 3.0,
-}
-
-
 def predict_tire_strategy(
-    driver: Dict,
+    driver: CarState,
     laps_remaining: int,
     weather_temp: float = 30.0,
-) -> Dict:
+) -> TireStrategyResult:
     """
-    Recommend a pit-stop window and target compound for the driver,
-    based on current tire age, compound, laps remaining, and track temp.
+    Recommend a pit-stop window and target compound.
     """
-    driver_name = driver.get("name", driver.get("id", "Driver"))
-    compound = (driver.get("tire") or "MEDIUM").upper()
-    tire_age = int(driver.get("tire_age") or 0)
+    compound = (driver.tire or "MEDIUM").upper()
+    tire_age = driver.tire_age
 
     max_life = TIRE_LIFE.get(compound, 35)
 
-    # Heat degrades tires faster — above 40°C, reduce life by up to 20%
-    temp_factor = 1.0 - max(0, (weather_temp - 40) / 100)
+    temp_factor = 1.0 - max(0.0, (weather_temp - 40) / 100)
     adjusted_life = int(max_life * temp_factor)
 
     laps_left_on_tire = max(0, adjusted_life - tire_age)
 
-    # Decide urgency
     if laps_left_on_tire == 0:
         urgency = "CRITICAL"
         pit_in_laps = 1
@@ -241,7 +257,6 @@ def predict_tire_strategy(
         urgency = "LOW"
         pit_in_laps = laps_left_on_tire
 
-    # Recommend next compound
     if laps_remaining <= 15:
         recommended = "SOFT"
     elif compound == "SOFT":
@@ -255,15 +270,15 @@ def predict_tire_strategy(
     two_stop = next_life < laps_remaining
     strategy_label = "2-stop" if two_stop else "1-stop"
 
-    return {
-        "driver": driver_name,
-        "current_compound": compound,
-        "tire_age": tire_age,
-        "laps_remaining": laps_remaining,
-        "laps_left_on_tire": laps_left_on_tire,
-        "pit_in_laps": pit_in_laps,
-        "urgency": urgency,
-        "recommended_compound": recommended,
-        "strategy": strategy_label,
-        "weather_temp": weather_temp,
-    }
+    return TireStrategyResult(
+        driver=driver.name or driver.id,
+        current_compound=compound,
+        tire_age=tire_age,
+        laps_remaining=laps_remaining,
+        laps_left_on_tire=laps_left_on_tire,
+        pit_in_laps=pit_in_laps,
+        urgency=urgency,
+        recommended_compound=recommended,
+        strategy=strategy_label,
+        weather_temp=weather_temp,
+    )

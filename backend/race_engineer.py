@@ -1,61 +1,49 @@
 """
 race_engineer.py — AI Race Engineer Chat Backend
-Provides tactical, terse F1 race engineer responses via Groq LLM.
+Provides tactical, terse F1 race engineer responses via Groq LLM using 2026 regs.
 """
 
 import logging
 import os
-from typing import Optional
-
 from groq import AsyncGroq
+from pydantic import BaseModel
+from livef1_client import RaceState
 
 logger = logging.getLogger(__name__)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "dummy_groq_key")
 _groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
+class RaceEngineerResponse(BaseModel):
+    response: str
+    context_used: dict
 
-def _parse_lap_time(raw: str | None) -> float | None:
-    """Convert 'M:SS.mmm' or 'SS.mmm' string to total seconds. Returns None on failure."""
-    if not raw:
-        return None
-    raw = str(raw).strip()
-    try:
-        if ":" in raw:
-            mins, rest = raw.split(":", 1)
-            return int(mins) * 60 + float(rest)
-        return float(raw)
-    except (ValueError, TypeError):
-        return None
-
-
-def _build_context(race_state: dict, driver_id: str | None) -> dict:
+def _build_context(race_state: RaceState, driver_id: str | None) -> dict:
     """Extract relevant race context from race_state for the focused driver."""
-    cars = race_state.get("cars", [])
-    session = race_state.get("session") or {}
-    weather = race_state.get("weather") or {}
+    cars = race_state.cars
+    weather = race_state.weather
 
     # Top 5 summary
     top5 = []
     for car in cars[:5]:
         top5.append(
             {
-                "pos": car.get("pos"),
-                "name": car.get("name", car.get("id", "?")),
-                "tire": car.get("tire", "?"),
-                "tire_age": car.get("tire_age", 0),
-                "interval": car.get("interval", "—"),
+                "pos": car.pos,
+                "name": car.name or car.id,
+                "tire": car.tire,
+                "tire_age": car.tire_age,
+                "interval": car.interval or "—",
             }
         )
 
     context: dict = {
-        "session_name": session.get("meeting_name", "Unknown Session"),
-        "session_type": session.get("type", "Race"),
-        "lap": race_state.get("lap"),
-        "total_laps": race_state.get("total_laps"),
+        "session_name": race_state.session_name,
+        "session_type": race_state.session_type,
+        "lap": race_state.lap,
+        "total_laps": race_state.total_laps,
         "weather": {
-            "air_temp": weather.get("air_temperature"),
-            "track_temp": weather.get("track_temperature"),
+            "air_temp": weather.get("air_temp"),
+            "track_temp": weather.get("track_temp"),
             "rainfall": weather.get("rainfall", False),
         },
         "top5": top5,
@@ -67,24 +55,35 @@ def _build_context(race_state: dict, driver_id: str | None) -> dict:
         needle = str(driver_id).strip().casefold()
         for car in cars:
             if (
-                needle == str(car.get("id", "")).casefold()
-                or needle == str(car.get("number", "")).casefold()
-                or needle in str(car.get("name", "")).casefold()
+                needle == str(car.id).casefold()
+                or needle == str(car.number).casefold()
+                or needle in str(car.name).casefold()
             ):
                 focused = car
                 break
 
         if focused:
+            # Need to get car behind/ahead
+            car_ahead = None
+            car_behind = None
+            for c in cars:
+                if c.pos == focused.pos - 1:
+                    car_ahead = c
+                elif c.pos == focused.pos + 1:
+                    car_behind = c
+
             context["focused_driver"] = {
-                "id": focused.get("id"),
-                "name": focused.get("name", focused.get("id", "Unknown")),
-                "pos": focused.get("pos"),
-                "tire": focused.get("tire", "UNKNOWN"),
-                "tire_age": focused.get("tire_age", 0),
-                "gap_to_leader": focused.get("gap_to_leader", "—"),
-                "interval": focused.get("interval", "—"),
-                "last_lap": focused.get("last_lap_time"),
-                "speed": focused.get("speed"),
+                "id": focused.id,
+                "name": focused.name or focused.id,
+                "pos": focused.pos,
+                "tire": focused.tire,
+                "tire_age": focused.tire_age,
+                "gap_to_leader": focused.gap_to_leader or "—",
+                "interval": focused.interval or "—",
+                "last_lap": focused.last_lap_time,
+                "speed": focused.speed,
+                "car_ahead": car_ahead.name if car_ahead else "None",
+                "car_behind": car_behind.name if car_behind else "None",
             }
 
     return context
@@ -95,7 +94,9 @@ def _build_system_prompt() -> str:
         "You are a senior Formula 1 race engineer with 20 years of experience at a top team. "
         "Respond to driver and team questions with precise, tactical, data-driven answers. "
         "Be terse — maximum 3 sentences. Use F1 radio tone: direct, calm under pressure. "
-        "Reference the race context data provided when relevant."
+        "Crucially, adhere to 2026 regulations: references must be to 'Overtake Mode' or 'OVR', NEVER 'DRS'. "
+        "Engines use a 50/50 ICE/ERS power split. Aerodynamics are active ground effect. "
+        "Reference the provided race context data when relevant."
     )
 
 
@@ -128,7 +129,9 @@ def _build_user_prompt(question: str, context: dict) -> str:
             f"Tire: {fd['tire']} age {fd['tire_age']} laps | "
             f"Gap to leader: {fd['gap_to_leader']} | "
             f"Interval (gap ahead): {fd['interval']} | "
-            f"Last lap: {fd['last_lap']}"
+            f"Last lap: {fd['last_lap']} | "
+            f"Car ahead: {fd['car_ahead']} | "
+            f"Car behind: {fd['car_behind']}"
         )
 
     lines.append(f"\nQuestion: {question}")
@@ -137,23 +140,16 @@ def _build_user_prompt(question: str, context: dict) -> str:
 
 async def race_engineer_response(
     question: str,
-    race_state: dict,
+    race_state: RaceState,
     driver_id: str | None = None,
 ) -> dict:
-    """
-    Generate a senior F1 race engineer response to a tactical question.
-
-    Args:
-        question: The question or command from the driver/team.
-        race_state: Current race state dict (from data_store / cached_state).
-        driver_id: Optional driver identifier to focus context on.
-
-    Returns:
-        {"response": str, "context_used": dict}
-    """
     context = _build_context(race_state, driver_id)
     system_prompt = _build_system_prompt()
     user_prompt = _build_user_prompt(question, context)
+
+    # Note: we use _groq_client.chat.completions.create but using AsyncGroq properly
+    # handles this asynchronously internally despite the seemingly synchronous method signature
+    # (actually it exposes async create)
 
     try:
         resp = await _groq_client.chat.completions.create(
@@ -168,7 +164,6 @@ async def race_engineer_response(
         answer = resp.choices[0].message.content.strip()
     except Exception as exc:
         logger.error("Groq error in race_engineer_response: %s", exc)
-        # Graceful fallback — basic tactical guidance
         fd = context.get("focused_driver")
         driver_name = fd["name"] if fd else "Driver"
         answer = (
