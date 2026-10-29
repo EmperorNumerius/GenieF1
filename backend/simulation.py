@@ -7,6 +7,25 @@ This is NOT the live data source — live data comes from livef1_client.py.
 import random
 from typing import Dict, List, Optional
 
+def parse_gap(value) -> Optional[float]:
+    """Parse a timing gap ("+1.234", "1.234", "LEADER", "LAP 12", "+1 LAP", None) into seconds."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().upper()
+    if not text or text.startswith("LEADER") or text.startswith("LAP"):
+        return 0.0
+    if "LAP" in text:  # lapped cars: treat each lap as ~90s so ordering stays sane
+        try:
+            return 90.0 * float(text.replace("+", "").split()[0])
+        except ValueError:
+            return None
+    try:
+        return float(text.replace("+", "").replace("S", ""))
+    except ValueError:
+        return None
+
 
 def predict_pit_stop(
     driver_pos: int,
@@ -35,8 +54,8 @@ def predict_pit_stop(
         if car.get("pos", 999) > driver_pos:
             # Car is behind us. Would it end up ahead after our pit?
             try:
-                their_gap = float(car.get("gap_to_leader") or car.get("interval") or 999)
-                our_gap = float(target.get("gap_to_leader") or target.get("interval") or 0)
+                their_gap = parse_gap(car.get("gap_to_leader")) if parse_gap(car.get("gap_to_leader")) is not None else 999.0
+                our_gap = parse_gap(target.get("gap_to_leader")) or 0.0
                 if their_gap < our_gap + pit_loss_seconds:
                     positions_lost += 1
             except (ValueError, TypeError):
@@ -150,10 +169,10 @@ def predict_overtake(
 
     # Current on-track gap in seconds
     try:
-        gap_to_leader_driver = float(driver.get("gap_to_leader") or 0)
-        gap_to_leader_target = float(target.get("gap_to_leader") or 0)
+        gap_to_leader_driver = parse_gap(driver.get("gap_to_leader"))
+        gap_to_leader_target = parse_gap(target.get("gap_to_leader"))
         gap_seconds = abs(gap_to_leader_driver - gap_to_leader_target)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # either gap unparseable
         gap_seconds = 3.0
 
     if gap_seconds < 0.5:

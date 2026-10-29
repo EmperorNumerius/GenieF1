@@ -16,6 +16,7 @@ import stripe
 load_dotenv()
 
 import livef1_client
+import openf1
 from simulation import predict_ers_impact, predict_overtake, predict_pit_stop, predict_tire_strategy, predict_yellow_flag_impact
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_dummy")
@@ -49,43 +50,68 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Snapshot of the most recent finished session, shown whenever nothing is live.
+_fallback_state: Dict[str, Any] = {}
+_fallback_loaded_at: float = 0.0
+FALLBACK_REFRESH_SECONDS = 600
+
+
+def _load_fallback_state() -> None:
+    """Fetch the latest completed session from OpenF1 (blocking; run in executor)."""
+    global _fallback_state, _fallback_loaded_at
+    import time as _time
+    try:
+        session = openf1.latest_completed_session()
+        if session:
+            snap = openf1.session_snapshot(session)
+            snap["historical"] = True
+            snap["next_session"] = openf1.next_session()
+            _fallback_state = snap
+            logger.info("Loaded fallback session: %s %s (%d cars)",
+                        session.get("meeting_name"), session.get("session_name"), len(snap["cars"]))
+    except Exception as exc:
+        logger.warning("Could not load fallback session: %s", exc)
+    finally:
+        _fallback_loaded_at = _time.time()
+
+
 async def refresh_cached_state() -> None:
-    """Read from the LiveF1 data store and update the global cached_state."""
+    """Prefer live LiveF1 data; otherwise serve the latest finished session from OpenF1."""
     global cached_state
 
     state = livef1_client.get_full_race_state(data_store)
-    session_info = livef1_client.get_session_info(data_store)
+    api_status = livef1_client.get_api_status(data_store)
 
-    snap = data_store.snapshot()
-    state["session"] = session_info
-    state["api_status"] = livef1_client.get_api_status(data_store)
-    state["stale"] = bool(state.get("error"))
-    state["track_outline"] = snap.get("track_outline", [])
-    state["position_trails"] = snap.get("position_history", {})
+    if state.get("cars"):
+        snap = data_store.snapshot()
+        state["session"] = livef1_client.get_session_info(data_store)
+        state["track_outline"] = snap.get("track_outline", [])
+        state["position_trails"] = snap.get("position_history", {})
+        state["historical"] = False
+        state["stale"] = False
+    elif _fallback_state.get("cars"):
+        state = dict(_fallback_state)
+        state["stale"] = False
+    else:
+        state.setdefault("track_outline", [])
+        state.setdefault("position_trails", {})
+        state["stale"] = True
 
-    # Mark if showing historical data
-    if livef1_client.is_historical_mode():
-        state["historical"] = True
-        state.pop("error", None)
-
+    state["api_status"] = api_status
     cached_state = state
 
 
 async def state_refresh_loop() -> None:
-    """Background loop that refreshes cached_state from the data store."""
-    # Give the livef1 client a moment to connect
-    await asyncio.sleep(3)
-
-    # If no live data after initial wait, load the last completed session
-    snap = data_store.snapshot()
-    if not snap["drivers"] and not snap["car_data"]:
-        logger.info("No live session detected — loading most recent historical session...")
-        await asyncio.get_event_loop().run_in_executor(
-            None, livef1_client.load_latest_historical_session, data_store
-        )
+    """Keep cached_state fresh; reload the between-sessions fallback every 10 minutes."""
+    import time as _time
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _load_fallback_state)
 
     while True:
         try:
+            live_has_cars = bool(livef1_client.get_full_race_state(data_store).get("cars"))
+            if not live_has_cars and _time.time() - _fallback_loaded_at > FALLBACK_REFRESH_SECONDS:
+                await loop.run_in_executor(None, _load_fallback_state)
             await refresh_cached_state()
         except Exception as exc:
             logger.warning("Error refreshing state: %s", exc)
@@ -195,7 +221,9 @@ async def get_status():
         "cached_state_updated_at": cached_state.get("updated_at"),
         "cached_state_error": cached_state.get("error"),
         "car_count": len(cached_state.get("cars", [])),
-        "data_source": "livef1 (SignalR)",
+        "data_source": "historical (OpenF1)" if cached_state.get("historical") else "livef1 (SignalR)",
+        "session": cached_state.get("session"),
+        "next_session": cached_state.get("next_session"),
     }
 
 
@@ -212,18 +240,18 @@ async def refresh_now():
 
 
 @app.get("/api/calendar")
-async def get_calendar(year: int = 2026):
-    """Get all race meetings for a given year."""
-    meetings = livef1_client.get_meetings_for_year(year)
-    if not meetings:
-        meetings = livef1_client.get_meetings_for_year(year - 1)
-    return {"year": year, "meetings": meetings or []}
+async def get_calendar(year: int = 0):
+    """All race weekends (with session times) for a season, plus the next session."""
+    year = year or datetime.now(timezone.utc).year
+    loop = asyncio.get_event_loop()
+    meetings = await loop.run_in_executor(None, openf1.get_meetings, year)
+    upcoming = await loop.run_in_executor(None, openf1.next_session, year)
+    return {"year": year, "meetings": meetings, "next_session": upcoming}
 
 
 def check_session_unlocked(session_id: Optional[str] = Header(None)):
-    if not session_id or session_id not in unlocked_sessions:
-        raise HTTPException(status_code=403, detail="AI insights locked. Please unlock.")
-    return session_id
+    # The AI tools are free for everyone; the old Stripe "unlock" was never wired up.
+    return session_id or "public"
 
 
 @app.get("/api/insights")
@@ -601,86 +629,59 @@ async def post_strategy_ab(body: StrategyABRequest):
 # Historical race browser + championship standings endpoints
 # ---------------------------------------------------------------------------
 
-import historical
-import standings as standings_module
+def _valid_season(season: int) -> None:
+    if season not in openf1.list_seasons():
+        raise HTTPException(status_code=404, detail=f"Season {season} not found")
+
+
+async def _run(fn, *args):
+    return await asyncio.get_event_loop().run_in_executor(None, fn, *args)
 
 
 @app.get("/api/seasons")
 async def get_seasons():
     """List all supported F1 seasons."""
-    return {"seasons": historical.list_seasons()}
+    return {"seasons": openf1.list_seasons()}
 
 
 @app.get("/api/seasons/{season}/races")
 async def get_season_races(season: int):
-    """Return the F1 calendar for a given season."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
-    try:
-        races = historical.list_races(season)
-        return {"season": season, "races": races}
-    except Exception as exc:
-        logger.warning("Error fetching races for %d: %s", season, exc)
-        return {"season": season, "races": []}
+    """Return the F1 calendar for a given season (Jolpica)."""
+    _valid_season(season)
+    return {"season": season, "races": await _run(openf1.list_races, season)}
 
 
 @app.get("/api/seasons/{season}/races/{round_num}")
 async def get_race_result(season: int, round_num: int):
-    """Return race results for a specific season and round."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
-    try:
-        result = historical.get_race_results(season, round_num)
-        if not result:
-            raise HTTPException(status_code=404, detail=f"Round {round_num} not found in {season}")
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.warning("Error fetching race %d R%d: %s", season, round_num, exc)
+    """Return real race results for a specific season and round (Jolpica)."""
+    _valid_season(season)
+    result = await _run(openf1.race_results, season, round_num)
+    if not result.get("name"):
         raise HTTPException(status_code=404, detail=f"Round {round_num} not found in {season}")
+    return result
 
 
 @app.get("/api/seasons/{season}/standings/drivers")
 async def get_driver_standings(season: int):
-    """Return driver championship standings for the given season."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
-    try:
-        return standings_module.driver_standings(season)
-    except Exception as exc:
-        logger.warning("Error computing driver standings for %d: %s", season, exc)
-        return []
+    """Return real driver championship standings (Jolpica)."""
+    _valid_season(season)
+    return await _run(openf1.driver_standings, season)
 
 
 @app.get("/api/seasons/{season}/standings/constructors")
 async def get_constructor_standings(season: int):
-    """Return constructor championship standings for the given season."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
-    try:
-        return standings_module.constructor_standings(season)
-    except Exception as exc:
-        logger.warning("Error computing constructor standings for %d: %s", season, exc)
-        return []
+    """Return real constructor championship standings (Jolpica)."""
+    _valid_season(season)
+    return await _run(openf1.constructor_standings, season)
 
 
 @app.get("/api/head_to_head")
-async def get_head_to_head(driver_a: str = "VER", driver_b: str = "HAM", season: int = 2024):
-    """Compare two drivers head-to-head across a full season."""
-    if season not in historical.list_seasons():
-        raise HTTPException(status_code=404, detail=f"Season {season} not found")
-    try:
-        return historical.head_to_head(driver_a, driver_b, season)
-    except Exception as exc:
-        logger.warning("Error computing head_to_head %s vs %s %d: %s", driver_a, driver_b, season, exc)
-        return {
-            "driver_a": driver_a.upper(),
-            "driver_b": driver_b.upper(),
-            "season": season,
-            "races": [],
-            "summary": {"a_wins": 0, "b_wins": 0, "a_avg_pos": 0.0, "b_avg_pos": 0.0},
-        }
+async def get_head_to_head(driver_a: str = "ANT", driver_b: str = "RUS", season: int = 0):
+    """Compare two drivers head-to-head across a full season using real results."""
+    season = season or datetime.now(timezone.utc).year
+    _valid_season(season)
+    return await _run(openf1.head_to_head, driver_a, driver_b, season)
+
 
 if __name__ == "__main__":
     import uvicorn

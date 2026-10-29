@@ -76,11 +76,11 @@ export function Header({
         </button>
 
         <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 px-2.5 py-1 rounded-full">
-          <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+          <div className={`w-1.5 h-1.5 rounded-full ${!connected ? 'bg-red-500' : isHistorical ? 'bg-amber-400' : 'bg-green-500 animate-pulse'}`} />
           <span
-            className={`font-mono text-[10px] font-bold tracking-widest ${connected ? 'text-green-500' : 'text-red-500'}`}
+            className={`font-mono text-[10px] font-bold tracking-widest ${!connected ? 'text-red-500' : isHistorical ? 'text-amber-400' : 'text-green-500'}`}
           >
-            {connected ? 'LIVE' : 'OFFLINE'}
+            {!connected ? 'OFFLINE' : isHistorical ? 'LAST SESSION' : 'LIVE'}
           </span>
         </div>
 
@@ -93,7 +93,7 @@ export function Header({
           </button>
         ) : (
           <span className="text-[10px] text-green-400 flex items-center gap-1.5 bg-green-500/10 border border-green-500/20 px-3 py-1 rounded-lg font-bold">
-            <Unlock className="w-3 h-3" /> PRO
+            <Unlock className="w-3 h-3" /> AI ON
           </span>
         )}
       </div>

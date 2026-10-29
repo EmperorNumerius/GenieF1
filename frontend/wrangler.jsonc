@@ -1,0 +1,11 @@
+{
+  // Cloudflare Worker that serves the static Next.js export (`next build` -> ./out).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "genief1",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "f1.numeri.us", "custom_domain": true }]
+}

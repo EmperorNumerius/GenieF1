@@ -52,7 +52,7 @@ type AiModalState =
 export default function Home() {
   const [raceState, setRaceState] = useState<any>(null);
   const [selectedDriver, setSelectedDriver] = useState<number | null>(null);
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(true); // AI tools are free; no paywall
   const [pitProjection, setPitProjection] = useState<any>(null);
   const [isProjecting, setIsProjecting] = useState(false);
   const [insight, setInsight] = useState<string | null>(null);
@@ -385,7 +385,7 @@ export default function Home() {
   const backendError = raceState.error as string | undefined;
 
   return (
-    <main className="h-screen bg-neutral-950 text-white flex flex-col overflow-hidden font-[Outfit,sans-serif]">
+    <main className="h-screen bg-neutral-950 text-white flex flex-col overflow-y-auto overflow-x-hidden font-[Outfit,sans-serif]">
       {/* HEADER */}
       <Header
         raceState={raceState}
@@ -699,7 +699,7 @@ export default function Home() {
       </AnimatePresence>
 
       {/* MAIN GRID */}
-      <div className="flex-1 flex overflow-hidden p-4 gap-4 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] bg-neutral-950">
+      <div className="flex-none h-[calc(100vh-112px)] min-h-[640px] flex overflow-hidden p-4 gap-4 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] bg-neutral-950">
         {/* LEFT: STANDINGS */}
         <SidebarStandings
           raceState={raceState}

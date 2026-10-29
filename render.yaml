@@ -23,12 +23,18 @@ services:
     healthCheckPath: /api/race_state
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11.0"
+        value: "3.12.7"
       - key: ALLOWED_ORIGINS
         value: "https://f1.numeri.us,http://localhost:3000"
       # The following must be set manually in the Render dashboard
       # (Render won't generate values for secrets — `sync: false`).
       - key: GROQ_API_KEY
+        sync: false
+      # Live timing needs an F1 TV account (livef1 >= 1.3). Without these the
+      # dashboard shows the most recent finished session from OpenF1 instead.
+      - key: F1_USERNAME
+        sync: false
+      - key: F1_PASSWORD
         sync: false
       - key: STRIPE_SECRET_KEY
         sync: false

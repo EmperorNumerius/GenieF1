@@ -1,10 +1,14 @@
-livef1
-fastapi
-uvicorn
-groq
-stripe
-discord.py
-websockets
-python-dotenv
-python-multipart
-pandas
+# Pinned so Render rebuilds can't pull a breaking release (livef1's API has
+# changed between minor versions before).
+livef1==1.3.0
+fastapi==0.162.0
+uvicorn==0.54.0
+groq==1.7.0
+stripe==16.0.1
+discord.py==2.7.1
+websockets==17.3
+python-dotenv==1.2.3
+python-multipart==0.0.32
+pandas==3.0.5
+httpx==0.28.1
+pydantic==2.13.5

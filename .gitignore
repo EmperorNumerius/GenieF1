@@ -28,3 +28,8 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# runtime artefacts
+*.log
+fastf1_cache/
+__pycache__/

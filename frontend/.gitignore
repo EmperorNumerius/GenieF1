@@ -7,3 +7,5 @@ dist/
 
 # Standardised on pnpm — do not commit npm lockfile
 package-lock.json
+out/
+next-env.d.ts

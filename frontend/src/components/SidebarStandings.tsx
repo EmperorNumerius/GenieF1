@@ -152,7 +152,7 @@ export function SidebarStandings({
                   <div className="flex flex-col gap-1.5 mt-1">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[9px] font-mono text-white font-black px-1 rounded shadow-sm" style={{ background: tireColor }}>
+                        <span className="text-[9px] font-mono font-black px-1 rounded shadow-sm" style={{ background: tireColor, color: ['HARD', 'MEDIUM'].includes(car.tire?.toUpperCase()) ? '#000' : '#fff' }}>
                           {car.tire?.charAt(0) || '?'} L{car.tire_age || 0}
                         </span>
                         <span className="text-[9px] font-mono font-bold text-neutral-400 ml-1">

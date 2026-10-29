@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -244,45 +245,75 @@ SUBSCRIBED_TOPICS = list(_TOPIC_HANDLERS.keys())
 
 # ─── LiveF1 Background Thread ─────────────────────────────────────────────────
 
+def _has_f1_credentials() -> bool:
+    return bool(os.getenv("F1_USERNAME") and os.getenv("F1_PASSWORD"))
+
+
+NO_CREDENTIALS_MSG = (
+    "Live timing needs an F1 TV account: set F1_USERNAME and F1_PASSWORD on the backend. "
+    "Showing the latest finished session instead."
+)
+
+
 def _run_livef1_client(data_store: LiveF1DataStore):
     """
-    Entry point for the daemon thread. Creates a RealF1Client,
-    registers a callback, and calls client.run() (blocking).
+    Entry point for the daemon thread. Signs in to F1 (live timing has required an
+    F1 TV subscription since livef1 1.3), then runs the SignalR client, reconnecting
+    with backoff if it drops.
     """
+    if not _has_f1_credentials():
+        logger.warning(NO_CREDENTIALS_MSG)
+        data_store.last_error = NO_CREDENTIALS_MSG
+        return
+
     try:
+        import livef1
         from livef1.adapters import RealF1Client
     except ImportError as e:
         logger.error("livef1 is not installed: %s", e)
         data_store.last_error = f"livef1 not installed: {e}"
         return
 
-    logger.info("Starting LiveF1 SignalR client with topics: %s", SUBSCRIBED_TOPICS)
-
-    client = RealF1Client(topics=SUBSCRIBED_TOPICS)
-    data_store.connected = True
-
-    @client.callback("genie_f1_handler")
-    async def handle_records(records):
+    backoff = 30
+    while True:
         try:
-            for topic_name, topic_records in records.items():
-                handler_name = _TOPIC_HANDLERS.get(topic_name)
-                if handler_name:
-                    handler = getattr(data_store, handler_name)
-                    handler(list(topic_records))
-                else:
-                    logger.debug("Unhandled topic: %s", topic_name)
+            livef1.login(os.environ["F1_USERNAME"], os.environ["F1_PASSWORD"])
         except Exception as exc:
-            logger.warning("Error processing topic data: %s", exc)
-            data_store.last_error = str(exc)
+            logger.error("F1 sign-in failed: %s", exc)
+            data_store.last_error = f"F1 sign-in failed: {exc}"
+            time.sleep(min(backoff, 1800))
+            backoff *= 2
+            continue
 
-    try:
-        client.run()  # Blocking — runs forever
-    except Exception as exc:
-        logger.error("LiveF1 client exited with error: %s", exc)
-        data_store.last_error = str(exc)
-    finally:
-        data_store.connected = False
-        logger.info("LiveF1 client thread stopped.")
+        logger.info("Starting LiveF1 SignalR client with topics: %s", SUBSCRIBED_TOPICS)
+        client = RealF1Client(topics=SUBSCRIBED_TOPICS)
+        data_store.connected = True
+        data_store.last_error = None
+
+        @client.callback("genie_f1_handler")
+        async def handle_records(records):
+            try:
+                for topic_name, topic_records in records.items():
+                    handler_name = _TOPIC_HANDLERS.get(topic_name)
+                    if handler_name:
+                        handler = getattr(data_store, handler_name)
+                        handler(list(topic_records))
+                    else:
+                        logger.debug("Unhandled topic: %s", topic_name)
+            except Exception as exc:
+                logger.warning("Error processing topic data: %s", exc)
+                data_store.last_error = str(exc)
+
+        try:
+            client.run()  # Blocking until the connection drops
+            backoff = 30
+        except Exception as exc:
+            logger.error("LiveF1 client exited with error: %s", exc)
+            data_store.last_error = str(exc)
+        finally:
+            data_store.connected = False
+        time.sleep(min(backoff, 1800))
+        backoff *= 2
 
 
 def start_livef1_thread(data_store: LiveF1DataStore) -> threading.Thread:
@@ -554,11 +585,11 @@ def get_api_status(data_store: LiveF1DataStore) -> Dict[str, Any]:
     """Connection health for the /api/status endpoint."""
     snap = data_store.snapshot()
     return {
-        "authenticated": True,  # livef1 uses public F1 servers, no auth needed
-        "auth_source": "livef1_signalr",
+        "authenticated": _has_f1_credentials(),
+        "auth_source": "f1tv_account" if _has_f1_credentials() else "none",
         "has_api_key": False,
-        "has_credential_pair": False,
-        "auth_error": None,
+        "has_credential_pair": _has_f1_credentials(),
+        "auth_error": None if _has_f1_credentials() else NO_CREDENTIALS_MSG,
         "last_fetch_error": snap.get("last_error") if not snap["connected"] else None,
         "last_success_at": snap["last_update_at"],
         "backoff_seconds": 0,

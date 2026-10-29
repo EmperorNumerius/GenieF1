@@ -69,7 +69,9 @@ export function AIInsightsPanel({ selectedDriver, raceState }: Props) {
 
   // Auto-scroll chat
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Scroll only the chat list, never the whole page.
+    const box = chatEndRef.current?.parentElement;
+    if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
   }, [chat]);
 
   // Poll Monte Carlo when on predict tab
